@@ -1,0 +1,156 @@
+# Esempio di configurazione per lo script CP-SAT dell'orario.
+#
+# Copia questo file in `config.yaml` (nella stessa cartella) e sostituisci i
+# dati anonimi con quelli reali della tua scuola. `config.yaml` e' escluso da
+# git e non va mai committato.
+#
+# I dati qui sotto sono anonimi ma hanno la stessa forma di un caso reale
+# (24h didattiche per classe, 5h di potenziamento, i tre ruoli speciali
+# assegnati): lo script e i test devono girare identici su questo file.
+#
+# La griglia oraria (giorni, slot, orari) e' invariante e vive in data.py:
+# qui si configurano solo i dati che cambiano da scuola a scuola / da un anno
+# all'altro.
+
+classes: ["1ª", "2ª", "3ª", "4ª", "5ª"]
+
+teachers:
+  - "Docente A"
+  - "Docente B"
+  - "Docente C"
+  - "Docente D"
+  - "Docente E"
+
+# Etichetta usata nell'output per le ore coperte da esperti esterni.
+expert_label: "Esperto"
+
+# Ore fisse coperte da esperti esterni: slot bloccati, non variabili di
+# decisione. `shared_with` elenca le altre classi che seguono la stessa
+# lezione (co-docenza), solo a fini informativi nell'output.
+expert_fixed:
+  - {class: "1ª", day: "Lunedì",  slot: "s3", subject: "Religione"}
+  - {class: "1ª", day: "Lunedì",  slot: "s4", subject: "Religione"}
+  - {class: "1ª", day: "Giovedì", slot: "s1", subject: "Inglese", shared_with: ["2ª"]}
+  - {class: "2ª", day: "Giovedì", slot: "s1", subject: "Inglese", shared_with: ["1ª"]}
+  - {class: "2ª", day: "Giovedì", slot: "s2", subject: "Inglese"}
+  - {class: "2ª", day: "Giovedì", slot: "s3", subject: "Religione", shared_with: ["3ª"]}
+  - {class: "2ª", day: "Giovedì", slot: "s4", subject: "Religione", shared_with: ["3ª"]}
+  - {class: "3ª", day: "Lunedì",  slot: "s2", subject: "Inglese"}
+  - {class: "3ª", day: "Martedì", slot: "s3", subject: "Inglese"}
+  - {class: "3ª", day: "Martedì", slot: "s4", subject: "Inglese"}
+  - {class: "3ª", day: "Giovedì", slot: "s3", subject: "Religione", shared_with: ["2ª"]}
+  - {class: "3ª", day: "Giovedì", slot: "s4", subject: "Religione", shared_with: ["2ª"]}
+  - {class: "4ª", day: "Lunedì",  slot: "s4", subject: "Inglese"}
+  - {class: "4ª", day: "Martedì", slot: "s2", subject: "Motoria"}
+  - {class: "4ª", day: "Giovedì", slot: "s3", subject: "Inglese"}
+  - {class: "4ª", day: "Giovedì", slot: "s4", subject: "Inglese"}
+  - {class: "4ª", day: "Giovedì", slot: "p1", subject: "Religione"}
+  - {class: "4ª", day: "Giovedì", slot: "p2", subject: "Religione"}
+  - {class: "5ª", day: "Lunedì",  slot: "s1", subject: "Religione"}
+  - {class: "5ª", day: "Lunedì",  slot: "s2", subject: "Religione"}
+  - {class: "5ª", day: "Lunedì",  slot: "s3", subject: "Inglese"}
+  - {class: "5ª", day: "Martedì", slot: "s1", subject: "Motoria"}
+  - {class: "5ª", day: "Giovedì", slot: "p1", subject: "Inglese"}
+  - {class: "5ª", day: "Giovedì", slot: "p2", subject: "Inglese"}
+
+# (classe, giorno) il cui intervallo e' gia' sorvegliato dall'esperto della
+# lezione precedente: nessun titolare puo' esserne incaricato.
+expert_covers_interval:
+  - {class: "2ª", day: "Giovedì"}
+  - {class: "3ª", day: "Lunedì"}
+
+# Monte ore dei titolari. Una riga con due classi = co-docenza: una sola ora,
+# stesso slot per entrambe, conta 1h per il docente (non 2h).
+courses:
+  - {teacher: "Docente A", classes: ["1ª"], subject: "Italiano",   hours: 6}
+  - {teacher: "Docente A", classes: ["1ª"], subject: "Storia",     hours: 1}
+  - {teacher: "Docente A", classes: ["1ª"], subject: "Geografia",  hours: 1}
+  - {teacher: "Docente A", classes: ["1ª"], subject: "Musica",     hours: 1}
+  - {teacher: "Docente A", classes: ["1ª"], subject: "Motoria",    hours: 1}
+  - {teacher: "Docente A", classes: ["5ª"], subject: "Italiano",   hours: 6}
+  - {teacher: "Docente A", classes: ["5ª"], subject: "Musica",     hours: 1}
+  - {teacher: "Docente A", classes: ["5ª"], subject: "Storia",     hours: 2}
+  - {teacher: "Docente B", classes: ["2ª"], subject: "Matematica", hours: 6}
+  - {teacher: "Docente B", classes: ["3ª"], subject: "Matematica", hours: 6}
+  - {teacher: "Docente B", classes: ["3ª"], subject: "Scienze",    hours: 1}
+  - {teacher: "Docente B", classes: ["4ª"], subject: "Matematica", hours: 6}
+  - {teacher: "Docente B", classes: ["4ª"], subject: "Scienze",    hours: 1}
+  - {teacher: "Docente C", classes: ["2ª"], subject: "Italiano",   hours: 6}
+  - {teacher: "Docente C", classes: ["3ª"], subject: "Italiano",   hours: 6}
+  - {teacher: "Docente C", classes: ["3ª"], subject: "Storia",     hours: 2}
+  - {teacher: "Docente C", classes: ["4ª"], subject: "Italiano",   hours: 6}
+  - {teacher: "Docente C", classes: ["4ª"], subject: "Storia",     hours: 2}
+  - {teacher: "Docente D", classes: ["1ª"], subject: "Matematica", hours: 6}
+  - {teacher: "Docente D", classes: ["1ª"], subject: "Scienze",    hours: 1}
+  - {teacher: "Docente D", classes: ["1ª"], subject: "Arte",       hours: 1}
+  - {teacher: "Docente D", classes: ["5ª"], subject: "Matematica", hours: 6}
+  - {teacher: "Docente D", classes: ["5ª"], subject: "Scienze",    hours: 2}
+  - {teacher: "Docente D", classes: ["5ª"], subject: "Geografia",  hours: 1}
+  - {teacher: "Docente E", classes: ["2ª"], subject: "Scienze",    hours: 1}
+  - {teacher: "Docente E", classes: ["2ª"], subject: "Storia",     hours: 1}
+  - {teacher: "Docente E", classes: ["2ª"], subject: "Geografia",  hours: 1}
+  - {teacher: "Docente E", classes: ["2ª"], subject: "Musica",     hours: 1}
+  - {teacher: "Docente E", classes: ["2ª"], subject: "Arte",       hours: 1}
+  # Co-docenza: 1h di motoria su 2ª e 3ª insieme, conta 1h per Docente E.
+  - {teacher: "Docente E", classes: ["2ª", "3ª"], subject: "Motoria", hours: 1}
+  - {teacher: "Docente E", classes: ["3ª"], subject: "Geografia",  hours: 1}
+  - {teacher: "Docente E", classes: ["3ª"], subject: "Musica",     hours: 1}
+  - {teacher: "Docente E", classes: ["3ª"], subject: "Arte",       hours: 1}
+  - {teacher: "Docente E", classes: ["4ª"], subject: "Geografia",  hours: 1}
+  - {teacher: "Docente E", classes: ["4ª"], subject: "Musica",     hours: 1}
+  - {teacher: "Docente E", classes: ["4ª"], subject: "Arte",       hours: 1}
+
+# Ore di potenziamento che un docente copre negli slot lasciati liberi da
+# titolari ed esperti in certe classi.
+reinforcement:
+  teacher: "Docente E"
+  subject: "Potenziamento"
+  hours:
+    "1ª": 3
+    "2ª": 2
+
+constraint_params:
+  # Materie che, quando il corso ha esattamente 2h, vanno in slot consecutivi
+  # non interrotti dall'intervallo (HARD).
+  two_hour_subjects: ["Storia", "Scienze", "Geografia"]
+  # Classi a cui si applica la preferenza "tre giorni diversi" per queste
+  # materie (SOFT).
+  spread_classes: ["3ª", "4ª", "5ª"]
+  # Monte ore settimanale contrattuale per docente (didattica + assistenza).
+  target_hours: 22
+  # Credito di assistenza per una sorveglianza intervallo.
+  interval_credit_hours: 0.5
+  # Credito di assistenza per ciascuno dei supervisori mensa.
+  lunch_credit_hours: 1
+  # Numero di docenti che condividono l'unico turno mensa di ogni giorno.
+  lunch_supervisors_per_day: 2
+  # Cap SOFT sulle ore della stessa materia per classe in un giorno.
+  daily_subject_soft_cap: 2
+
+# Pesi della funzione obiettivo (MEDIUM/SOFT). Vedi docs/DECISIONS.md per il
+# razionale dei due termini dominanti (monte_ore_target, uscita_anticipata).
+weights:
+  monte_ore_target: 100
+  uscita_anticipata: 200
+  p1_p2_stessa_docente: 10
+  intervallo_con_s2_o_s3: 10
+  mensa_con_s4_o_p1: 10
+  materie_2h_giorni_diversi: 3
+  un_solo_pomeriggio: 2
+  buchi_orari: 1
+  max_2h_giorno_stessa_materia: 1
+
+# Ruoli speciali assegnati a docenti concreti.
+teacher_roles:
+  # Esce alla fine di s3 (11:40) nei giorni indicati e nel giorno corto tra
+  # martedi' e giovedi'; un solo pomeriggio a settimana (HARD).
+  early_exit:
+    teacher: "Docente D"
+    weighted_no_s4_days: ["Mercoledì", "Venerdì"]
+  # Nessun p1/p2 nel giorno indicato (HARD).
+  no_afternoon:
+    teacher: "Docente E"
+    day: "Giovedì"
+  # Gia' a monte ore pieno di sola didattica: 0h di assistenza (HARD).
+  teaching_only:
+    teacher: "Docente C"

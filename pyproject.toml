@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "primary-school-timetable"
+version = "1.0.0"
+description = "CP-SAT solver for a primary-school weekly timetable"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "ortools>=9.14",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+timetable = "main:main"
+
+[tool.setuptools]
+package-dir = { "" = "scripts" }
+py-modules = ["data", "model", "output", "main"]
+
+[tool.pytest.ini_options]
+testpaths = ["scripts/tests"]
+pythonpath = ["scripts"]

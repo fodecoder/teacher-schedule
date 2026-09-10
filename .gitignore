@@ -1,0 +1,24 @@
+# Virtual env e cache Python
+scripts/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Output generato ad ogni run
+scripts/orario_output.json
+/output/
+
+# Dati reali della scuola — MAI committare
+scripts/config.yaml
+
+# File di lavoro locali (istruzioni operative, prompt) — fuori dal repo pubblico
+/CLAUDE.md
+/PROMPTS.md
+
+# Requisiti originali in prosa ed esportazioni con nomi reali
+/requirements.txt
+/orario_scuola.pdf
+/orario_scuola.xlsx

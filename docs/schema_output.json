@@ -1,0 +1,85 @@
+{
+  "_comment": "Schema/esempio dell'output prodotto dallo script CP-SAT. Le chiavi sono in inglese per essere universalmente parsabili; i valori (materie, giorni, nomi) restano in italiano perché finiranno stampati nelle tabelle. Pensato per essere consumato senza ambiguità da un altro programma che genera PDF/Excel.",
+
+  "meta": {
+    "school_year": "2026-2027",
+    "generated_at": "2026-09-09T00:00:00+02:00",
+    "solver_status": "OPTIMAL",
+    "objective_value": 0,
+    "days": ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"],
+    "slots": [
+      {"id": "s1", "label": "8:10-9:10", "start": "08:10", "end": "09:10"},
+      {"id": "s2", "label": "9:10-10:10", "start": "09:10", "end": "10:10"},
+      {"id": "intervallo", "label": "10:10-10:40", "start": "10:10", "end": "10:40"},
+      {"id": "s3", "label": "10:40-11:40", "start": "10:40", "end": "11:40"},
+      {"id": "s4", "label": "11:40-12:40", "start": "11:40", "end": "12:40"},
+      {"id": "mensa", "label": "12:40-13:45", "start": "12:40", "end": "13:45", "days": ["Martedì", "Giovedì"]},
+      {"id": "p1", "label": "13:45-14:45", "start": "13:45", "end": "14:45", "days": ["Martedì", "Giovedì"]},
+      {"id": "p2", "label": "14:45-15:45", "start": "14:45", "end": "15:45", "days": ["Martedì", "Giovedì"]}
+    ],
+    "classes": ["1ª", "2ª", "3ª", "4ª", "5ª"],
+    "teachers": ["Docente A", "Docente B", "Docente C", "Docente D", "Docente E"]
+  },
+
+  "by_class": {
+    "1ª": {
+      "Lunedì": {
+        "s1": {"subject": "Italiano", "teacher": "Docente A", "shared_with": []},
+        "s2": {"subject": "Italiano", "teacher": "Docente A", "shared_with": []},
+        "s3": {"subject": "Religione", "teacher": "Esperto", "shared_with": []},
+        "s4": {"subject": "Religione", "teacher": "Esperto", "shared_with": []}
+      },
+      "Martedì": {
+        "s1": {"subject": "Matematica", "teacher": "Docente D", "shared_with": []}
+      }
+    },
+    "2ª": {
+      "Giovedì": {
+        "s3": {"subject": "Religione", "teacher": "Esperto", "shared_with": ["3ª"]}
+      }
+    }
+  },
+
+  "by_teacher": {
+    "Docente A": {
+      "total_hours": 22,
+      "teaching_hours": 19,
+      "assistance_hours": 3,
+      "schedule": {
+        "Lunedì": {
+          "s1": {"class": "1ª", "subject": "Italiano", "activity_type": "didattica"}
+        }
+      }
+    },
+    "Docente E": {
+      "total_hours": 22,
+      "teaching_hours": 17,
+      "assistance_hours": 5,
+      "schedule": {
+        "Martedì": {
+          "intervallo": {"class": "3ª", "subject": null, "activity_type": "assistenza_intervallo"}
+        },
+        "Giovedì": {
+          "mensa": {"class": null, "subject": null, "activity_type": "assistenza_mensa", "shared_with_teacher": "Docente B"}
+        }
+      }
+    }
+  },
+
+  "activity_types": [
+    "didattica",
+    "assistenza_intervallo",
+    "assistenza_mensa",
+    "potenziamento"
+  ],
+
+  "constraint_report": {
+    "hard_violations": [],
+    "medium_violations": [
+      {"constraint": "p1_p2_stessa_docente", "class": "3ª", "detail": "p1 e p2 assegnati a docenti diversi: Docente B, Docente C"}
+    ],
+    "soft_violations": [
+      {"constraint": "un_solo_pomeriggio", "teacher": "Docente B", "detail": "2 pomeriggi assegnati invece di 1"}
+    ]
+  }
+}
