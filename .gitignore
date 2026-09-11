@@ -10,6 +10,7 @@ dist/
 # Output generato ad ogni run
 scripts/orario_output.json
 /output/
+scripts/logs/
 
 # Dati reali della scuola — MAI committare
 scripts/config.yaml

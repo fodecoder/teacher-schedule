@@ -29,8 +29,12 @@ Ore settimanali per classe: didattica 4×3 + 6×2 = **24h**; + intervallo 5×0.5
 + mensa 2×1 = 2h → totale 28.5h. I vincoli derivano dalla griglia slot, non da
 una riga riassuntiva.
 
-Questa griglia è invariante ed è fissata nel codice (`scripts/data.py`); tutto
-il resto è configurazione.
+Questa griglia (giorni, slot, quali giorni sono "estesi") è configurazione,
+non codice: vive nella sezione `schedule` di `scripts/config.example.yaml` /
+`scripts/config.yaml`, non in `scripts/data.py`. Una scuola con un orario
+diverso (es. tutti i giorni un unico blocco 8:00-13:30, senza pomeriggio)
+compila una sezione `schedule` diversa, senza toccare il codice — vedi i
+commenti in `config.example.yaml` e `scripts/tests/test_generic_schedule.py`.
 
 ## 2. Classi e ore fisse per presenza di Esperti (HARD, non modificabili)
 

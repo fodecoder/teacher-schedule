@@ -10,8 +10,12 @@ Identificatori: `REL-n` = vincolo rilassato; `ADD-n` = vincolo aggiunto.
 
 I ruoli citati (`early_exit`, `no_afternoon`, `teaching_only`, `reinforcement`)
 sono assegnati a docenti concreti nel file di configurazione, sezione
-`teacher_roles`. I numeri qui sotto si riferiscono al caso di
-`config.example.yaml`.
+`teacher_roles` (più la sezione `reinforcement` separata). Ognuno di questi
+ruoli è **opzionale**: una scuola che non ha un equivalente di un ruolo lo
+omette dalla config e il vincolo HARD/MEDIUM corrispondente (H6/H7/H10/H12)
+non viene aggiunto al modello — vedi i commenti in `scripts/data.py` e
+`scripts/model.py`. I numeri qui sotto si riferiscono al caso di
+`config.example.yaml`, dove tutti i ruoli sono configurati.
 
 ---
 

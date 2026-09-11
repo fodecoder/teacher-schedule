@@ -2,6 +2,7 @@
   "_comment": "Schema/esempio dell'output prodotto dallo script CP-SAT. Le chiavi sono in inglese per essere universalmente parsabili; i valori (materie, giorni, nomi) restano in italiano perché finiranno stampati nelle tabelle. Pensato per essere consumato senza ambiguità da un altro programma che genera PDF/Excel.",
 
   "meta": {
+    "tool_version": "0.1.0",
     "school_year": "2026-2027",
     "generated_at": "2026-09-09T00:00:00+02:00",
     "solver_status": "OPTIMAL",
