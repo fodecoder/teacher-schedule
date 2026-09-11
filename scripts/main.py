@@ -13,6 +13,7 @@ validation found a HARD violation.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -21,9 +22,13 @@ from typing import Dict, List, Optional, Tuple
 from ortools.sat.python import cp_model
 
 import data
+import logging_setup
 import model as model_module
 import output
 from model import Lesson, Solution, TimetableModelBuilder
+from version import __version__
+
+logger = logging.getLogger("orario.main")
 
 EXIT_OK = 0
 EXIT_INFEASIBLE = 1
@@ -32,6 +37,7 @@ EXIT_INVALID = 2
 SCRIPTS_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT = SCRIPTS_DIR / "orario_output.json"
 DEFAULT_CONFIG = SCRIPTS_DIR / "config.yaml"
+DEFAULT_LOG_FILE = SCRIPTS_DIR / "logs" / "orario.log"
 EXPECTED_VENV = SCRIPTS_DIR / ".venv"
 
 
@@ -246,7 +252,11 @@ def _check_two_hour_adjacency(solution: Solution) -> List[Dict[str, str]]:
 
 
 def _check_early_exit(solution: Solution) -> List[Dict[str, str]]:
+    """H6 (optional): skipped entirely if the role is not configured."""
     teacher = data.EARLY_EXIT_TEACHER
+    if teacher is None:
+        return []
+    last_morning_slot = data.MORNING_SLOTS[-1]
     problems: List[Dict[str, str]] = []
 
     afternoons = {
@@ -282,15 +292,15 @@ def _check_early_exit(solution: Solution) -> List[Dict[str, str]]:
     for lesson in _teaching_lessons(solution):
         if (
             lesson.teacher == teacher
-            and lesson.slot == "s4"
+            and lesson.slot == last_morning_slot
             and lesson.day in short_days
         ):
             problems.append(
                 {
                     "constraint": "H6",
                     "detail": (
-                        f"{teacher}: s4 di {lesson.day}, ma quel giorno esce "
-                        "alle 11:40"
+                        f"{teacher}: {last_morning_slot} di {lesson.day}, ma "
+                        "quel giorno esce anticipatamente"
                     ),
                 }
             )
@@ -309,8 +319,11 @@ def _check_early_exit(solution: Solution) -> List[Dict[str, str]]:
 
 
 def _check_no_afternoon(solution: Solution) -> List[Dict[str, str]]:
+    """H7 (optional): skipped entirely if the role is not configured."""
     teacher = data.NO_AFTERNOON_TEACHER
     day = data.NO_AFTERNOON_DAY
+    if teacher is None:
+        return []
     return [
         {
             "constraint": "H7",
@@ -356,18 +369,19 @@ def _check_co_teaching(solution: Solution) -> List[Dict[str, str]]:
 def _check_assistance(solution: Solution) -> List[Dict[str, str]]:
     problems: List[Dict[str, str]] = []
 
-    per_day = Counter(day for _, day in solution.lunch_duties)
-    for day in data.AFTERNOON_DAYS:
-        if per_day[day] != data.LUNCH_SUPERVISORS_PER_DAY:
-            problems.append(
-                {
-                    "constraint": "H8",
-                    "detail": (
-                        f"mensa di {day}: {per_day[day]} docenti invece di "
-                        f"{data.LUNCH_SUPERVISORS_PER_DAY}"
-                    ),
-                }
-            )
+    if data.LUNCH_SLOT is not None:
+        per_day = Counter(day for _, day in solution.lunch_duties)
+        for day in data.AFTERNOON_DAYS:
+            if per_day[day] != data.LUNCH_SUPERVISORS_PER_DAY:
+                problems.append(
+                    {
+                        "constraint": "H8",
+                        "detail": (
+                            f"mensa di {day}: {per_day[day]} docenti invece "
+                            f"di {data.LUNCH_SUPERVISORS_PER_DAY}"
+                        ),
+                    }
+                )
 
     per_class_day = Counter(
         (class_, day) for _, class_, day in solution.interval_duties
@@ -408,28 +422,29 @@ def _check_assistance(solution: Solution) -> List[Dict[str, str]]:
             )
 
     teaching_only = data.TEACHING_ONLY_TEACHER
-    assistance = output.hours_from_half(
-        solution.assistance_half_hours[teaching_only]
-    )
-    total = output.hours_from_half(solution.half_hours[teaching_only])
-    target = output.hours_from_half(data.TARGET_HALF_HOURS)
-    if solution.assistance_half_hours[teaching_only] != 0:
-        problems.append(
-            {
-                "constraint": "H12",
-                "detail": (
-                    f"{teaching_only}: {assistance}h di assistenza, deve "
-                    "essere 0"
-                ),
-            }
+    if teaching_only is not None:
+        assistance = output.hours_from_half(
+            solution.assistance_half_hours[teaching_only]
         )
-    if solution.half_hours[teaching_only] != data.TARGET_HALF_HOURS:
-        problems.append(
-            {
-                "constraint": "H12",
-                "detail": f"{teaching_only}: {total}h invece di {target}h",
-            }
-        )
+        total = output.hours_from_half(solution.half_hours[teaching_only])
+        target = output.hours_from_half(data.TARGET_HALF_HOURS)
+        if solution.assistance_half_hours[teaching_only] != 0:
+            problems.append(
+                {
+                    "constraint": "H12",
+                    "detail": (
+                        f"{teaching_only}: {assistance}h di assistenza, deve "
+                        "essere 0"
+                    ),
+                }
+            )
+        if solution.half_hours[teaching_only] != data.TARGET_HALF_HOURS:
+            problems.append(
+                {
+                    "constraint": "H12",
+                    "detail": f"{teaching_only}: {total}h invece di {target}h",
+                }
+            )
     return problems
 
 
@@ -512,16 +527,17 @@ def _print_grid(title: str, rows: Dict[str, Dict[str, str]]) -> None:
 def print_report(solution: Solution, payload: Dict[str, object]) -> None:
     """Print the whole timetable and the constraint outcome to stdout."""
     print("=" * 78)
-    print("ORARIO SCOLASTICO — risultato CP-SAT")
+    print(f"ORARIO SCOLASTICO — risultato CP-SAT (v{__version__})")
     print("=" * 78)
     print(f"Interprete   : {sys.executable}")
     print(f"Virtual env  : {sys.prefix}")
     print(f"Stato solver : {solution.status}")
     print(f"Obiettivo    : {solution.objective_value}")
-    print(
-        f"Giorno lungo (uscita anticipata): "
-        f"{solution.early_exit_afternoon_day}"
-    )
+    if data.EARLY_EXIT_TEACHER is not None:
+        print(
+            f"Giorno esteso 'lungo' (uscita anticipata): "
+            f"{solution.early_exit_afternoon_day}"
+        )
 
     by_class = payload["by_class"]
     supervisors = {
@@ -610,6 +626,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         description="Risolve l'orario scolastico con OR-Tools CP-SAT."
     )
     parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+    parser.add_argument(
         "--time-limit",
         type=float,
         default=120.0,
@@ -629,48 +650,73 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="percorso del JSON di output",
     )
     parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=DEFAULT_LOG_FILE,
+        help="percorso del file di log (default: scripts/logs/orario.log)",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
-        help="stampa il log di ricerca del solver",
+        help="stampa anche il log DEBUG (incluso il log di ricerca del "
+        "solver) su console; il file di log resta sempre a livello DEBUG",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    _assert_project_venv()
     args = parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    print(f"Interprete : {sys.executable}")
-    print(f"sys.prefix : {sys.prefix}")
+    logging_setup.configure_logging(args.log_file, verbose=args.verbose)
+    logger.info("Orario CP-SAT v%s — avvio", __version__)
+
+    try:
+        _assert_project_venv()
+    except SystemExit as error:
+        logger.error(str(error))
+        raise
+
+    logger.info("Interprete: %s", sys.executable)
+    logger.debug("sys.prefix: %s", sys.prefix)
 
     try:
         data.load_config(args.config)
     except FileNotFoundError as error:
-        raise SystemExit(f"ERRORE: {error}")
+        logger.error("Config non trovata: %s", error)
+        raise SystemExit(1) from error
     except data.ConfigError as error:
-        raise SystemExit(f"ERRORE nella configurazione {args.config}: {error}")
-    print(f"Config     : {args.config}")
+        logger.error(
+            "Errore nella configurazione %s: %s", args.config, error
+        )
+        raise SystemExit(1) from error
+    logger.info("Config caricata da %s", args.config)
 
+    logger.info(
+        "Costruzione modello e avvio solver (time-limit=%.0fs)",
+        args.time_limit,
+    )
     builder = TimetableModelBuilder(optimize=True)
     cp_sat_model = builder.build()
     solver = model_module.build_solver(args.time_limit, args.verbose)
     status = solver.Solve(cp_sat_model)
     status_name = solver.StatusName(status)
+    logger.info("Stato solver: %s", status_name)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        print(f"Nessuna soluzione: stato {status_name}.")
-        print("Analisi dei vincoli HARD in conflitto in corso…")
+        logger.error("Nessuna soluzione trovata: stato %s", status_name)
+        logger.info("Analisi dei vincoli HARD in conflitto in corso…")
         groups = model_module.diagnose_infeasibility(args.time_limit)
         for group in groups:
-            print(
-                f"  - {group}: "
-                f"{data.HARD_CONSTRAINT_LABELS.get(group, 'sconosciuto')}"
+            logger.warning(
+                "Vincolo HARD in conflitto: %s (%s)",
+                group,
+                data.HARD_CONSTRAINT_LABELS.get(group, "sconosciuto"),
             )
         payload = output.build_infeasible_output(status_name, groups)
         output.write_output(payload, args.output)
-        print(f"\nReport scritto in {args.output}")
+        logger.info("Report di infeasibility scritto in %s", args.output)
         return EXIT_INFEASIBLE
 
     solution = builder.extract(solver, status_name)
@@ -678,15 +724,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     payload = output.build_output(solution, hard_violations)
     output.write_output(payload, args.output)
     print_report(solution, payload)
-    print(f"\nJSON scritto in {args.output}")
+    logger.info("JSON scritto in %s", args.output)
 
     if hard_violations:
-        print(
-            "\nATTENZIONE: la validazione indipendente ha trovato "
-            f"{len(hard_violations)} violazioni HARD."
+        logger.warning(
+            "Validazione indipendente: %d violazioni HARD trovate",
+            len(hard_violations),
         )
         return EXIT_INVALID
-    print("\nValidazione indipendente superata: nessun vincolo HARD violato.")
+    logger.info("Validazione indipendente superata: nessun vincolo HARD violato")
     return EXIT_OK
 
 
