@@ -1,8 +1,16 @@
-"""Invariants of the hard-coded time grid (no config, no solver)."""
+"""Invariants of the time grid loaded from config.example.yaml (no solver).
+
+The grid is config-driven (see ``data._parse_schedule``), so these tests need
+the ``config`` fixture to have run ``data.load_config`` first — unlike the
+old hard-coded grid, ``data.DAYS`` & co. do not exist before that."""
 
 from __future__ import annotations
 
+import pytest
+
 import data
+
+pytestmark = pytest.mark.usefixtures("config")
 
 
 def test_weekly_teaching_slots_is_24() -> None:

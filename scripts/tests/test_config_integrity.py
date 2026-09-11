@@ -121,6 +121,19 @@ def test_load_config_rejects_unknown_teacher(tmp_path: Path) -> None:
     broken.write_text(
         textwrap.dedent(
             """
+            schedule:
+              days: ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
+              extended_days: ["Martedì", "Giovedì"]
+              slots:
+                - {id: s1, kind: teaching}
+                - {id: s2, kind: teaching}
+                - {id: intervallo, kind: interval}
+                - {id: s3, kind: teaching}
+                - {id: s4, kind: teaching}
+                - {id: mensa, kind: lunch, extended_only: true}
+                - {id: p1, kind: teaching, extended_only: true}
+                - {id: p2, kind: teaching, extended_only: true}
+              consecutive_pairs: [[s1, s2], [s3, s4], [p1, p2]]
             classes: ["1ª"]
             teachers: ["Docente A"]
             expert_fixed: []
