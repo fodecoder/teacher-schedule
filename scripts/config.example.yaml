@@ -8,9 +8,34 @@
 # (24h didattiche per classe, 5h di potenziamento, i tre ruoli speciali
 # assegnati): lo script e i test devono girare identici su questo file.
 #
-# La griglia oraria (giorni, slot, orari) e' invariante e vive in data.py:
-# qui si configurano solo i dati che cambiano da scuola a scuola / da un anno
-# all'altro.
+# Ogni sezione qui sotto e' dati, non codice: una scuola con un orario
+# diverso (es. tutti i giorni 8:00-13:30, senza giorni estesi) si configura
+# cambiando solo `schedule`, senza toccare scripts/*.py. Vedi
+# `docs/requisiti_puliti.md` §1 per la spiegazione della griglia oraria.
+
+# --------------------------------------------------------------------------
+# Griglia oraria: giorni, slot, quali giorni sono "estesi" (pomeriggio+mensa).
+# --------------------------------------------------------------------------
+schedule:
+  days: ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
+  # Giorni che hanno anche gli slot con extended_only: true (qui: mensa, p1,
+  # p2). Una scuola senza pomeriggio lascia questa lista vuota: [].
+  extended_days: ["Martedì", "Giovedì"]
+  # kind: "teaching" (slot didattico), "interval" (ricreazione — al massimo
+  # uno), "lunch" (mensa — al massimo uno, richiede extended_only: true).
+  # extended_only: true = lo slot esiste solo nei giorni di extended_days.
+  slots:
+    - {id: s1, kind: teaching, label: "8:10-9:10", start: "08:10", end: "09:10"}
+    - {id: s2, kind: teaching, label: "9:10-10:10", start: "09:10", end: "10:10"}
+    - {id: intervallo, kind: interval, label: "10:10-10:40", start: "10:10", end: "10:40"}
+    - {id: s3, kind: teaching, label: "10:40-11:40", start: "10:40", end: "11:40"}
+    - {id: s4, kind: teaching, label: "11:40-12:40", start: "11:40", end: "12:40"}
+    - {id: mensa, kind: lunch, label: "12:40-13:45", start: "12:40", end: "13:45", extended_only: true}
+    - {id: p1, kind: teaching, label: "13:45-14:45", start: "13:45", end: "14:45", extended_only: true}
+    - {id: p2, kind: teaching, label: "14:45-15:45", start: "14:45", end: "15:45", extended_only: true}
+  # Coppie di slot davvero consecutive (non separate da intervallo/mensa):
+  # governano H5, il vincolo "materie da 2h in slot adiacenti".
+  consecutive_pairs: [[s1, s2], [s3, s4], [p1, p2]]
 
 classes: ["1ª", "2ª", "3ª", "4ª", "5ª"]
 
