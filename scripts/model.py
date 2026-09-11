@@ -31,12 +31,15 @@ Which concrete teacher fills each role ("early exit", "no afternoon",
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from ortools.sat.python import cp_model
 
 import data
+
+logger = logging.getLogger("orario.model")
 
 # Activity labels used in the output schema.
 ACTIVITY_TEACHING = "didattica"
@@ -226,26 +229,34 @@ class TimetableModelBuilder:
                         name
                     )
 
-        for teacher in data.TEACHERS:
-            for class_ in data.CLASSES:
-                for day in data.DAYS:
-                    if (class_, day) in data.EXPERT_COVERS_INTERVAL:
-                        continue
-                    name = f"int_{teacher}_{class_}_{day}"
-                    self.interval[(teacher, class_, day)] = (
-                        self.model.NewBoolVar(name)
+        # Interval-supervision duties only make sense if the schedule
+        # actually has an "interval" slot (a school with no recess omits it
+        # in the config, and the whole H11/assistance machinery disappears).
+        if data.INTERVAL_SLOT is not None:
+            for teacher in data.TEACHERS:
+                for class_ in data.CLASSES:
+                    for day in data.DAYS:
+                        if (class_, day) in data.EXPERT_COVERS_INTERVAL:
+                            continue
+                        name = f"int_{teacher}_{class_}_{day}"
+                        self.interval[(teacher, class_, day)] = (
+                            self.model.NewBoolVar(name)
+                        )
+
+        # Likewise, lunch duties only exist if the schedule has a "lunch"
+        # slot at all.
+        if data.LUNCH_SLOT is not None:
+            for teacher in data.TEACHERS:
+                for day in data.AFTERNOON_DAYS:
+                    self.lunch[(teacher, day)] = self.model.NewBoolVar(
+                        f"mensa_{teacher}_{day}"
                     )
 
-        for teacher in data.TEACHERS:
+        if data.EARLY_EXIT_TEACHER is not None:
             for day in data.AFTERNOON_DAYS:
-                self.lunch[(teacher, day)] = self.model.NewBoolVar(
-                    f"mensa_{teacher}_{day}"
+                self.early_exit_afternoon[day] = self.model.NewBoolVar(
+                    f"early_exit_pom_{day}"
                 )
-
-        for day in data.AFTERNOON_DAYS:
-            self.early_exit_afternoon[day] = self.model.NewBoolVar(
-                f"early_exit_pom_{day}"
-            )
 
     def _teaching_literals(
         self, teacher: str, day: str, slot: str
@@ -379,21 +390,31 @@ class TimetableModelBuilder:
             self._add("H5", self.model.Add(sum(pair_literals) == 1))
 
     def _add_early_exit_rules(self) -> None:
-        """H6: the early-exit teacher works a single afternoon and leaves at
-        11:40 (end of s3) on the short day between the two afternoon days."""
+        """H6 (optional): the early-exit teacher works a single extended day
+        and leaves at the end of the morning block on the short extended day.
+
+        Skipped entirely if ``teacher_roles.early_exit`` is not configured —
+        a school with no equivalent of this role simply has no H6 rule."""
         teacher = data.EARLY_EXIT_TEACHER
+        if teacher is None:
+            return
+        last_morning_slot = data.MORNING_SLOTS[-1]
         self._add(
             "H6", self.model.Add(sum(self.early_exit_afternoon.values()) == 1)
         )
 
         for day in data.AFTERNOON_DAYS:
             marker = self.early_exit_afternoon[day]
-            # No s4 and no mensa on the short day.
-            for literal in self._teaching_literals(teacher, day, "s4"):
+            # No last-morning-slot lesson and no mensa on the short day.
+            for literal in self._teaching_literals(
+                teacher, day, last_morning_slot
+            ):
                 self._add("H6", self.model.Add(literal <= marker))
-                self._add(
-                    "H6", self.model.Add(self.lunch[(teacher, day)] <= marker)
-                )
+                if (teacher, day) in self.lunch:
+                    self._add(
+                        "H6",
+                        self.model.Add(self.lunch[(teacher, day)] <= marker),
+                    )
                 # Afternoon lessons only on the marked day, and that day must
                 # really carry at least one of them.
                 afternoon_literals: List[cp_model.IntVar] = []
@@ -405,13 +426,15 @@ class TimetableModelBuilder:
                     "H6",
                     self.model.Add(sum(afternoon_literals) >= marker),
                 )
-            # The weighted-exit days would deserve the same s4 ban, but it is
+            # The weighted-exit days would deserve the same ban, but it is
             # unsatisfiable there and is handled as a weighted goal instead; see
             # _add_early_exit_preference.
 
     def _add_no_afternoon_rule(self) -> None:
-        """H7: the "no afternoon" teacher never works p1/p2 on the configured
-        day."""
+        """H7 (optional): the "no afternoon" teacher never works an extended
+        slot on the configured day. Skipped if the role is not configured."""
+        if data.NO_AFTERNOON_TEACHER is None:
+            return
         for slot in data.AFTERNOON_SLOTS:
             for literal in self._teaching_literals(
                 data.NO_AFTERNOON_TEACHER, data.NO_AFTERNOON_DAY, slot
@@ -419,7 +442,10 @@ class TimetableModelBuilder:
                 self._add("H7", self.model.Add(literal == 0))
 
     def _add_lunch_shift(self) -> None:
-        """H8: one mensa shift per mensa day, shared by exactly 2 teachers."""
+        """H8 (optional): one mensa shift per mensa day, shared by exactly N
+        teachers. Skipped if the schedule has no 'lunch' slot."""
+        if data.LUNCH_SLOT is None:
+            return
         for day in data.AFTERNOON_DAYS:
             literals = [
                 self.lunch[(teacher, day)] for teacher in data.TEACHERS
@@ -432,7 +458,10 @@ class TimetableModelBuilder:
             )
 
     def _add_reinforcement_hours(self) -> None:
-        """H10: the reinforcement teacher's per-class load, from the config."""
+        """H10 (optional): the reinforcement teacher's per-class load, from
+        the config. Skipped if no reinforcement teacher is configured."""
+        if data.REINFORCEMENT_TEACHER is None:
+            return
         for class_, hours in data.REINFORCEMENT_HOURS.items():
             literals = [
                 var for key, var in self.reinforce.items() if key[0] == class_
@@ -440,7 +469,10 @@ class TimetableModelBuilder:
             self._add("H10", self.model.Add(sum(literals) == hours))
 
     def _add_interval_capacity(self) -> None:
-        """H11: at most one supervisor per class, one class per teacher."""
+        """H11 (optional): at most one supervisor per class, one class per
+        teacher. Skipped if the schedule has no 'interval' slot."""
+        if data.INTERVAL_SLOT is None:
+            return
         for class_ in data.CLASSES:
             for day in data.DAYS:
                 literals = [
@@ -489,19 +521,25 @@ class TimetableModelBuilder:
             )
             self.half_hours[teacher] = total
 
+        # H12 (optional): the "teaching only" teacher has 0h of assistance
+        # and is pinned exactly at the target load. Skipped if the role is
+        # not configured.
         teaching_only = data.TEACHING_ONLY_TEACHER
-        assistance = [
-            var for key, var in self.interval.items() if key[0] == teaching_only
-        ] + [
-            var for key, var in self.lunch.items() if key[0] == teaching_only
-        ]
-        self._add("H12", self.model.Add(sum(assistance) == 0))
-        self._add(
-            "H12",
-            self.model.Add(
-                self.half_hours[teaching_only] == data.TARGET_HALF_HOURS
-            ),
-        )
+        if teaching_only is not None:
+            assistance = [
+                var
+                for key, var in self.interval.items()
+                if key[0] == teaching_only
+            ] + [
+                var for key, var in self.lunch.items() if key[0] == teaching_only
+            ]
+            self._add("H12", self.model.Add(sum(assistance) == 0))
+            self._add(
+                "H12",
+                self.model.Add(
+                    self.half_hours[teaching_only] == data.TARGET_HALF_HOURS
+                ),
+            )
 
     # -- MEDIUM / SOFT penalties -----------------------------------------
 
@@ -547,19 +585,23 @@ class TimetableModelBuilder:
             )
 
     def _add_early_exit_preference(self) -> None:
-        """The early-exit teacher's 11:40 departure on the weighted days.
+        """The early-exit teacher's departure on the weighted days.
 
         HARD in the source document, but unsatisfiable: those days carry no
-        expert hours, so at s4 every class needs a titolare and as many
-        distinct teachers as there are classes (H2 + H3); some class can only
-        be taught by two teachers, so barring the early-exit teacher from s4
-        leaves one class uncovered.  Kept as a heavily weighted goal so the
-        residual violations show up in the report instead of turning the whole
-        model infeasible (see ``docs/DECISIONS.md``).
+        expert hours, so at the last morning slot every class needs a
+        titolare and as many distinct teachers as there are classes (H2 +
+        H3); some class can only be taught by two teachers, so barring the
+        early-exit teacher from that slot leaves one class uncovered. Kept as
+        a heavily weighted goal so the residual violations show up in the
+        report instead of turning the whole model infeasible (see
+        ``docs/DECISIONS.md``). Skipped if the role is not configured.
         """
         teacher = data.EARLY_EXIT_TEACHER
+        if teacher is None:
+            return
+        last_morning_slot = data.MORNING_SLOTS[-1]
         for day in data.EARLY_EXIT_WEIGHTED_DAYS:
-            literals = self._teaching_literals(teacher, day, "s4")
+            literals = self._teaching_literals(teacher, day, last_morning_slot)
             if not literals:
                 continue
             penalty = self.model.NewBoolVar(f"early_exit_{day}")
@@ -568,15 +610,20 @@ class TimetableModelBuilder:
                 "uscita_anticipata",
                 "medium",
                 penalty,
-                lambda _value, d=day: (
-                    f"{teacher}: s4 di {d}, non esce alle 11:40 "
+                lambda _value, d=day, slot=last_morning_slot: (
+                    f"{teacher}: {slot} di {d}, non esce all'orario previsto "
                     "(nessun altro docente disponibile per una classe)"
                 ),
                 teacher=teacher,
             )
 
     def _add_afternoon_pairing(self) -> None:
-        """MEDIUM: p1 and p2 of a class taught by the same person."""
+        """MEDIUM: the two extended-day afternoon slots of a class taught by
+        the same person. Only meaningful with exactly two afternoon slots
+        (the usual "p1 e p2" shape); skipped otherwise."""
+        if len(data.AFTERNOON_SLOTS) != 2:
+            return
+        slot_a, slot_b = data.AFTERNOON_SLOTS
         holders = list(data.TEACHERS) + [data.EXPERT_LABEL]
         for class_ in data.CLASSES:
             for day in data.AFTERNOON_DAYS:
@@ -584,8 +631,8 @@ class TimetableModelBuilder:
                     self._bool_and(
                         f"same_{class_}_{day}_{holder}",
                         [
-                            self.occupancy[(class_, day, "p1", holder)],
-                            self.occupancy[(class_, day, "p2", holder)],
+                            self.occupancy[(class_, day, slot_a, holder)],
+                            self.occupancy[(class_, day, slot_b, holder)],
                         ],
                     )
                     for holder in holders
@@ -600,55 +647,85 @@ class TimetableModelBuilder:
                     "medium",
                     penalty,
                     lambda _value, c=class_, d=day: (
-                        f"{d}: p1 e p2 della {c} assegnati a docenti diversi"
+                        f"{d}: {slot_a} e {slot_b} della {c} assegnati a "
+                        "docenti diversi"
                     ),
                     class_=class_,
                 )
 
+    def _interval_neighbor_slots(self) -> Tuple[str, ...]:
+        """Teaching slots immediately before/after the interval slot.
+
+        Generalises the original "s2 or s3" rule (the two teaching slots
+        flanking the recess) to whatever slot ids the schedule actually
+        uses."""
+        if data.INTERVAL_SLOT is None:
+            return ()
+        order = data.FULL_SLOT_ORDER
+        idx = order.index(data.INTERVAL_SLOT)
+        neighbors = []
+        if idx > 0 and data.SLOT_KIND.get(order[idx - 1]) == "teaching":
+            neighbors.append(order[idx - 1])
+        if idx < len(order) - 1 and data.SLOT_KIND.get(order[idx + 1]) == "teaching":
+            neighbors.append(order[idx + 1])
+        return tuple(neighbors)
+
     def _add_interval_preference(self) -> None:
-        """MEDIUM: interval supervised by who taught s2 or s3 in that class."""
+        """MEDIUM: interval supervised by whoever taught the slot right
+        before or right after it in that class. Skipped if there is no
+        interval slot."""
+        if data.INTERVAL_SLOT is None:
+            return
+        neighbor_slots = self._interval_neighbor_slots()
         for (teacher, class_, day), duty in self.interval.items():
             entitled = self._bool_or(
                 f"ent_{teacher}_{class_}_{day}",
                 [
-                    self.occupancy[(class_, day, "s2", teacher)],
-                    self.occupancy[(class_, day, "s3", teacher)],
+                    self.occupancy[(class_, day, slot, teacher)]
+                    for slot in neighbor_slots
+                    if (class_, day, slot, teacher) in self.occupancy
                 ],
             )
             penalty = self.model.NewBoolVar(
                 f"int_pen_{teacher}_{class_}_{day}"
             )
             self.model.AddBoolOr([duty.Not(), entitled, penalty])
+            neighbor_label = " o ".join(neighbor_slots) or "nessuno slot adiacente"
             self._register(
                 "intervallo_con_s2_o_s3",
                 "medium",
                 penalty,
-                lambda _value, t=teacher, c=class_, d=day: (
+                lambda _value, t=teacher, c=class_, d=day, nl=neighbor_label: (
                     f"{d}: {t} sorveglia l'intervallo della {c} senza avervi "
-                    "s2 o s3"
+                    f"{nl}"
                 ),
                 class_=class_,
                 teacher=teacher,
             )
 
     def _add_lunch_preference(self) -> None:
-        """MEDIUM: mensa preferably to who has s4 or p1 that day."""
+        """MEDIUM: mensa preferably to whoever teaches the slot right before
+        or right after it that day. Skipped if there is no lunch slot."""
+        if data.LUNCH_SLOT is None:
+            return
+        last_morning_slot = data.MORNING_SLOTS[-1]
+        first_afternoon_slot = (
+            data.AFTERNOON_SLOTS[0] if data.AFTERNOON_SLOTS else None
+        )
         for (teacher, day), duty in self.lunch.items():
             penalty = self.model.NewBoolVar(f"mensa_pen_{teacher}_{day}")
-            self.model.AddBoolOr(
-                [
-                    duty.Not(),
-                    self.busy[(teacher, day, "s4")],
-                    self.busy[(teacher, day, "p1")],
-                    penalty,
-                ]
-            )
+            candidates = [duty.Not(), self.busy[(teacher, day, last_morning_slot)]]
+            if first_afternoon_slot is not None:
+                candidates.append(self.busy[(teacher, day, first_afternoon_slot)])
+            candidates.append(penalty)
+            self.model.AddBoolOr(candidates)
             self._register(
                 "mensa_con_s4_o_p1",
                 "medium",
                 penalty,
                 lambda _value, t=teacher, d=day: (
-                    f"{d}: {t} è di turno mensa pur non avendo s4 né p1"
+                    f"{d}: {t} è di turno mensa pur non avendo lezione "
+                    "immediatamente prima o dopo"
                 ),
                 teacher=teacher,
             )
@@ -771,11 +848,14 @@ class TimetableModelBuilder:
                 )
 
     def _add_daily_subject_cap(self) -> None:
-        """SOFT: no more than 2 hours of the same subject per class per day."""
-        subjects = sorted(
-            {course.subject for course in data.COURSES}
-            | {data.REINFORCEMENT_SUBJECT}
-        )
+        """SOFT: no more than ``daily_subject_soft_cap`` hours of the same
+        subject per class per day. Skipped if no cap is configured."""
+        if data.DAILY_SUBJECT_SOFT_CAP is None:
+            return
+        subjects = {course.subject for course in data.COURSES}
+        if data.REINFORCEMENT_SUBJECT is not None:
+            subjects.add(data.REINFORCEMENT_SUBJECT)
+        subjects = sorted(subjects)
         for class_ in data.CLASSES:
             for subject in subjects:
                 for day in data.DAYS:
@@ -828,6 +908,7 @@ class TimetableModelBuilder:
 
     def build(self) -> cp_model.CpModel:
         """Post every variable, constraint and (optionally) the objective."""
+        logger.debug("Costruzione modello CP-SAT (optimize=%s)", self.optimize)
         self._create_variables()
         self._create_occupancy_variables()
 
@@ -842,6 +923,14 @@ class TimetableModelBuilder:
         self._add_reinforcement_hours()
         self._add_interval_capacity()
         self._add_hour_accounting()
+
+        # Every relaxable HARD group must have an assumption literal, even
+        # one whose constraint methods were skipped because the matching
+        # role is not configured (see the optional-role guards above):
+        # diagnose_infeasibility()/_greedy_relaxation() index this dict by
+        # every name in RELAXABLE_HARD_GROUPS unconditionally.
+        for group in RELAXABLE_HARD_GROUPS:
+            self._guard(group)
 
         if not self.optimize:
             # Feasibility pass: no objective, so CP-SAT can return an unsat
@@ -1000,6 +1089,7 @@ def diagnose_infeasibility(time_limit: float) -> List[str]:
     falls back to a greedy relaxation that drops one group at a time until the
     remaining model becomes satisfiable.
     """
+    logger.info("Diagnosi infeasibility: ricerca unsat core (assumption-based)")
     builder = TimetableModelBuilder(optimize=False, post_assumptions=True)
     model = builder.build()
     solver = build_solver(time_limit, log_progress=False)
@@ -1016,8 +1106,13 @@ def diagnose_infeasibility(time_limit: float) -> List[str]:
         if index in literal_to_group
     ]
     if core:
-        return sorted(core, key=lambda key: int(key[1:]))
+        result = sorted(core, key=lambda key: int(key[1:]))
+        logger.info("Unsat core trovato: %s", result)
+        return result
 
+    logger.warning(
+        "Unsat core vuoto: passo a rilassamento greedy (piu' lento)"
+    )
     return _greedy_relaxation(time_limit)
 
 
@@ -1026,6 +1121,7 @@ def _greedy_relaxation(time_limit: float) -> List[str]:
     dropped: List[str] = []
     for group in reversed(RELAXABLE_HARD_GROUPS):
         dropped.append(group)
+        logger.debug("Rilassamento greedy: provo a rilasciare %s", dropped)
         builder = TimetableModelBuilder(optimize=False, post_assumptions=False)
         model = builder.build()
         for kept in RELAXABLE_HARD_GROUPS:
@@ -1033,5 +1129,11 @@ def _greedy_relaxation(time_limit: float) -> List[str]:
         solver = build_solver(time_limit, log_progress=False)
         status = solver.Solve(model)
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return sorted(dropped, key=lambda key: int(key[1:]))
+            result = sorted(dropped, key=lambda key: int(key[1:]))
+            logger.info("Rilassamento greedy: feasible rilasciando %s", result)
+            return result
+    logger.error(
+        "Rilassamento greedy: nessun sottoinsieme di gruppi rilasciati ha "
+        "reso il modello feasible"
+    )
     return list(RELAXABLE_HARD_GROUPS)
