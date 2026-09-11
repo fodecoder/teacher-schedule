@@ -16,6 +16,7 @@ Two notes on the shape produced here:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -23,6 +24,9 @@ from typing import Dict, List, Optional, Sequence
 import data
 import model as model_module
 from model import Solution, Violation
+from version import __version__
+
+logger = logging.getLogger("orario.output")
 
 
 def hours_from_half(half_hours: int) -> float:
@@ -45,6 +49,7 @@ def _build_meta(
     solver_status: str, objective_value: Optional[int], moment: datetime
 ) -> Dict[str, object]:
     return {
+        "tool_version": __version__,
         "school_year": _school_year(moment),
         "generated_at": moment.isoformat(timespec="seconds"),
         "solver_status": solver_status,
@@ -234,6 +239,8 @@ def write_output(payload: Dict[str, object], path: Path) -> None:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
     except OSError as error:
+        logger.error("Scrittura output fallita (%s): %s", path, error)
         raise OSError(
             f"impossibile scrivere il file di output {path}: {error}"
         ) from error
+    logger.debug("Output JSON scritto in %s", path)
