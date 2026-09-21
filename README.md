@@ -84,7 +84,9 @@ scripts/.venv/Scripts/python.exe scripts/main.py --config scripts/config.yaml
 ```
 
 Opzioni: `--time-limit <secondi>` (default 120), `--output <path>`,
-`--verbose` (log di ricerca del solver).
+`--log-file <path>` (default `scripts/logs/orario.log`), `--verbose` (alza a
+DEBUG anche il log su console, incluso il log di ricerca del solver; il file
+resta sempre a DEBUG).
 
 Codici di uscita: `0` risolto e validato, `1` nessuna soluzione (infeasible),
 `2` risolto ma la validazione indipendente ha trovato una violazione HARD.
