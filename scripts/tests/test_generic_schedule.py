@@ -14,8 +14,10 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from ortools.sat.python import cp_model
 
 import data
+import model
 
 _EXAMPLE_CONFIG = Path(__file__).resolve().parents[1] / "config.example.yaml"
 
@@ -152,3 +154,71 @@ weights:
 def test_two_lunch_slots_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(data.ConfigError):
         data.load_config(_write(tmp_path, _TWO_LUNCH_SLOTS_CONFIG))
+
+
+_EARLY_EXIT_NO_OWN_COURSES_CONFIG = """
+schedule:
+  days: ["Lunedì", "Martedì"]
+  extended_days: ["Martedì"]
+  slots:
+    - {id: m1, kind: teaching, label: "8:00-9:00"}
+    - {id: m2, kind: teaching, label: "9:00-10:00"}
+    - {id: p1, kind: teaching, label: "14:00-15:00", extended_only: true}
+
+classes: ["A"]
+teachers: ["Rossi", "Bianchi"]
+
+courses:
+  - {teacher: "Bianchi", classes: ["A"], subject: "Italiano", hours: 5}
+
+constraint_params:
+  target_hours: 5
+
+teacher_roles:
+  early_exit:
+    teacher: "Rossi"
+
+weights:
+  monte_ore_target: 0
+  uscita_anticipata: 0
+  p1_p2_stessa_docente: 0
+  intervallo_con_s2_o_s3: 0
+  mensa_con_s4_o_p1: 0
+  materie_2h_giorni_diversi: 0
+  un_solo_pomeriggio: 0
+  buchi_orari: 0
+  max_2h_giorno_stessa_materia: 0
+"""
+
+
+def test_h6_binds_afternoon_even_with_no_last_morning_slot_literals(
+    tmp_path: Path,
+) -> None:
+    """Regression test for the H6 indentation bug in
+    ``_add_early_exit_rules``: the mensa/afternoon constraints must be
+    posted once per day, not nested inside the loop over the early-exit
+    teacher's last-morning-slot teaching literals.
+
+    ``Rossi`` is the early_exit teacher but has no courses of their own
+    (all teaching is done by ``Bianchi``), so
+    ``_teaching_literals("Rossi", day, slot)`` is empty for every day and
+    slot. With only one extended day, H6's ``sum(marker) == 1`` forces
+    that day's marker to 1, which in turn (once the fix posts
+    ``sum(afternoon_literals) >= marker`` at the day level, unconditional
+    on the last-morning-slot loop) requires at least one afternoon
+    teaching literal for Rossi on that day — impossible, since Rossi
+    never teaches at all. The model must therefore be INFEASIBLE.
+
+    Before the fix, the day-level mensa/afternoon block was nested inside
+    the (here always empty) last-morning-slot loop and so never ran,
+    leaving the marker disconnected from real afternoon lessons and the
+    model spuriously FEASIBLE.
+    """
+    data.load_config(_write(tmp_path, _EARLY_EXIT_NO_OWN_COURSES_CONFIG))
+
+    builder = model.TimetableModelBuilder(optimize=True)
+    cp_sat_model = builder.build()
+    solver = model.build_solver(time_limit=5.0, log_progress=False)
+    status = solver.Solve(cp_sat_model)
+
+    assert status == cp_model.INFEASIBLE

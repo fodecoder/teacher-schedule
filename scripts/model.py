@@ -410,22 +410,22 @@ class TimetableModelBuilder:
                 teacher, day, last_morning_slot
             ):
                 self._add("H6", self.model.Add(literal <= marker))
-                if (teacher, day) in self.lunch:
-                    self._add(
-                        "H6",
-                        self.model.Add(self.lunch[(teacher, day)] <= marker),
-                    )
-                # Afternoon lessons only on the marked day, and that day must
-                # really carry at least one of them.
-                afternoon_literals: List[cp_model.IntVar] = []
-                for slot in data.AFTERNOON_SLOTS:
-                    for literal in self._teaching_literals(teacher, day, slot):
-                        self._add("H6", self.model.Add(literal <= marker))
-                        afternoon_literals.append(literal)
+            if (teacher, day) in self.lunch:
                 self._add(
                     "H6",
-                    self.model.Add(sum(afternoon_literals) >= marker),
+                    self.model.Add(self.lunch[(teacher, day)] <= marker),
                 )
+            # Afternoon lessons only on the marked day, and that day must
+            # really carry at least one of them.
+            afternoon_literals: List[cp_model.IntVar] = []
+            for slot in data.AFTERNOON_SLOTS:
+                for literal in self._teaching_literals(teacher, day, slot):
+                    self._add("H6", self.model.Add(literal <= marker))
+                    afternoon_literals.append(literal)
+            self._add(
+                "H6",
+                self.model.Add(sum(afternoon_literals) >= marker),
+            )
             # The weighted-exit days would deserve the same ban, but it is
             # unsatisfiable there and is handled as a weighted goal instead; see
             # _add_early_exit_preference.

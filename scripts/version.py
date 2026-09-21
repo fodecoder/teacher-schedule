@@ -9,4 +9,4 @@ Bump this on every functionally relevant change:
   output JSON schema (``docs/schema_output.json``).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
