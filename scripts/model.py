@@ -129,7 +129,10 @@ class TimetableModelBuilder:
     """Builds the CP-SAT model and extracts a :class:`Solution` from it."""
 
     def __init__(
-        self, optimize: bool = True, post_assumptions: bool = False
+        self,
+        config: data.Config,
+        optimize: bool = True,
+        post_assumptions: bool = False,
     ) -> None:
         """Configure the build.
 
@@ -139,6 +142,7 @@ class TimetableModelBuilder:
         ``AddAssumptions`` (``post_assumptions=True``, for the unsat core) or
         pin only a subset of them (greedy relaxation).
         """
+        self.config = config
         self.optimize = optimize
         self.post_assumptions = post_assumptions
         self.model = cp_model.CpModel()
@@ -159,7 +163,7 @@ class TimetableModelBuilder:
         self._constants: Dict[int, cp_model.IntVar] = {}
         self._expert_at: Dict[Tuple[str, str, str], data.FixedExpertHour] = {
             (hour.class_, hour.day, hour.slot): hour
-            for hour in data.EXPERT_FIXED
+            for hour in self.config.expert_fixed
         }
 
     # -- small helpers ----------------------------------------------------
@@ -215,15 +219,15 @@ class TimetableModelBuilder:
     # -- variables --------------------------------------------------------
 
     def _create_variables(self) -> None:
-        for index, course in enumerate(data.COURSES):
-            for day in data.DAYS:
-                for slot in data.teaching_slots(day):
+        for index, course in enumerate(self.config.courses):
+            for day in self.config.days:
+                for slot in self.config.teaching_slots(day):
                     name = f"teach_{index}_{day}_{slot}"
                     self.teach[(index, day, slot)] = self.model.NewBoolVar(name)
 
-        for class_ in data.REINFORCEMENT_HOURS:
-            for day in data.DAYS:
-                for slot in data.teaching_slots(day):
+        for class_ in self.config.reinforcement_hours:
+            for day in self.config.days:
+                for slot in self.config.teaching_slots(day):
                     name = f"pot_{class_}_{day}_{slot}"
                     self.reinforce[(class_, day, slot)] = self.model.NewBoolVar(
                         name
@@ -232,11 +236,11 @@ class TimetableModelBuilder:
         # Interval-supervision duties only make sense if the schedule
         # actually has an "interval" slot (a school with no recess omits it
         # in the config, and the whole H11/assistance machinery disappears).
-        if data.INTERVAL_SLOT is not None:
-            for teacher in data.TEACHERS:
-                for class_ in data.CLASSES:
-                    for day in data.DAYS:
-                        if (class_, day) in data.EXPERT_COVERS_INTERVAL:
+        if self.config.interval_slot is not None:
+            for teacher in self.config.teachers:
+                for class_ in self.config.classes:
+                    for day in self.config.days:
+                        if (class_, day) in self.config.expert_covers_interval:
                             continue
                         name = f"int_{teacher}_{class_}_{day}"
                         self.interval[(teacher, class_, day)] = (
@@ -245,15 +249,15 @@ class TimetableModelBuilder:
 
         # Likewise, lunch duties only exist if the schedule has a "lunch"
         # slot at all.
-        if data.LUNCH_SLOT is not None:
-            for teacher in data.TEACHERS:
-                for day in data.AFTERNOON_DAYS:
+        if self.config.lunch_slot is not None:
+            for teacher in self.config.teachers:
+                for day in self.config.extended_days:
                     self.lunch[(teacher, day)] = self.model.NewBoolVar(
                         f"mensa_{teacher}_{day}"
                     )
 
-        if data.EARLY_EXIT_TEACHER is not None:
-            for day in data.AFTERNOON_DAYS:
+        if self.config.early_exit_teacher is not None:
+            for day in self.config.extended_days:
                 self.early_exit_afternoon[day] = self.model.NewBoolVar(
                     f"early_exit_pom_{day}"
                 )
@@ -268,13 +272,13 @@ class TimetableModelBuilder:
         """
         literals = [
             self.teach[(index, day, slot)]
-            for index, course in enumerate(data.COURSES)
+            for index, course in enumerate(self.config.courses)
             if course.teacher == teacher and (index, day, slot) in self.teach
         ]
-        if teacher == data.REINFORCEMENT_TEACHER:
+        if teacher == self.config.reinforcement_teacher:
             literals.extend(
                 self.reinforce[(class_, day, slot)]
-                for class_ in data.REINFORCEMENT_HOURS
+                for class_ in self.config.reinforcement_hours
                 if (class_, day, slot) in self.reinforce
             )
         return literals
@@ -285,7 +289,7 @@ class TimetableModelBuilder:
         """Decision variables that would occupy ``class_`` at that slot."""
         literals = [
             self.teach[(index, day, slot)]
-            for index, course in enumerate(data.COURSES)
+            for index, course in enumerate(self.config.courses)
             if class_ in course.classes and (index, day, slot) in self.teach
         ]
         if (class_, day, slot) in self.reinforce:
@@ -294,23 +298,23 @@ class TimetableModelBuilder:
 
     def _create_occupancy_variables(self) -> None:
         """Per (class, day, slot, teacher) presence indicators."""
-        for class_ in data.CLASSES:
-            for day in data.DAYS:
-                for slot in data.teaching_slots(day):
+        for class_ in self.config.classes:
+            for day in self.config.days:
+                for slot in self.config.teaching_slots(day):
                     expert_subject = self._expert_subject(class_, day, slot)
-                    self.occupancy[(class_, day, slot, data.EXPERT_LABEL)] = (
+                    self.occupancy[(class_, day, slot, self.config.expert_label)] = (
                         self._constant_bool(1 if expert_subject else 0)
                     )
-                    for teacher in data.TEACHERS:
+                    for teacher in self.config.teachers:
                         literals = [
                             self.teach[(index, day, slot)]
-                            for index, course in enumerate(data.COURSES)
+                            for index, course in enumerate(self.config.courses)
                             if course.teacher == teacher
                             and class_ in course.classes
                             and (index, day, slot) in self.teach
                         ]
                         if (
-                            teacher == data.REINFORCEMENT_TEACHER
+                            teacher == self.config.reinforcement_teacher
                             and (class_, day, slot) in self.reinforce
                         ):
                             literals.append(
@@ -322,9 +326,9 @@ class TimetableModelBuilder:
                             )
                         )
 
-        for teacher in data.TEACHERS:
-            for day in data.DAYS:
-                for slot in data.teaching_slots(day):
+        for teacher in self.config.teachers:
+            for day in self.config.days:
+                for slot in self.config.teaching_slots(day):
                     literals = self._teaching_literals(teacher, day, slot)
                     self.busy[(teacher, day, slot)] = self._bool_or(
                         f"busy_{teacher}_{day}_{slot}", literals
@@ -340,9 +344,9 @@ class TimetableModelBuilder:
 
     def _add_class_coverage(self) -> None:
         """H2: every teaching slot of every class is filled exactly once."""
-        for class_ in data.CLASSES:
-            for day in data.DAYS:
-                for slot in data.teaching_slots(day):
+        for class_ in self.config.classes:
+            for day in self.config.days:
+                for slot in self.config.teaching_slots(day):
                     expert = 1 if self._expert_subject(class_, day, slot) else 0
                     literals = self._class_literals(class_, day, slot)
                     self._add(
@@ -351,16 +355,16 @@ class TimetableModelBuilder:
 
     def _add_teacher_uniqueness(self) -> None:
         """H3: a teacher cannot be in two places at the same time."""
-        for teacher in data.TEACHERS:
-            for day in data.DAYS:
-                for slot in data.teaching_slots(day):
+        for teacher in self.config.teachers:
+            for day in self.config.days:
+                for slot in self.config.teaching_slots(day):
                     literals = self._teaching_literals(teacher, day, slot)
                     if len(literals) > 1:
                         self._add("H3", self.model.Add(sum(literals) <= 1))
 
     def _add_course_hours(self) -> None:
         """H4: each course gets exactly its prescribed number of hours."""
-        for index, course in enumerate(data.COURSES):
+        for index, course in enumerate(self.config.courses):
             literals = [
                 var for key, var in self.teach.items() if key[0] == index
             ]
@@ -368,13 +372,13 @@ class TimetableModelBuilder:
 
     def _add_two_hour_adjacency(self) -> None:
         """H5: 2-hour subjects sit on two truly consecutive slots."""
-        for index, course in enumerate(data.COURSES):
-            if course.hours != 2 or course.subject not in data.TWO_HOUR_SUBJECTS:
+        for index, course in enumerate(self.config.courses):
+            if course.hours != 2 or course.subject not in self.config.two_hour_subjects:
                 continue
             pair_literals: List[cp_model.IntVar] = []
-            for day in data.DAYS:
-                slots = data.teaching_slots(day)
-                for first, second in data.CONSECUTIVE_PAIRS:
+            for day in self.config.days:
+                slots = self.config.teaching_slots(day)
+                for first, second in self.config.consecutive_pairs:
                     if first not in slots or second not in slots:
                         continue
                     pair = self.model.NewBoolVar(
@@ -395,15 +399,15 @@ class TimetableModelBuilder:
 
         Skipped entirely if ``teacher_roles.early_exit`` is not configured —
         a school with no equivalent of this role simply has no H6 rule."""
-        teacher = data.EARLY_EXIT_TEACHER
+        teacher = self.config.early_exit_teacher
         if teacher is None:
             return
-        last_morning_slot = data.MORNING_SLOTS[-1]
+        last_morning_slot = self.config.morning_slots[-1]
         self._add(
             "H6", self.model.Add(sum(self.early_exit_afternoon.values()) == 1)
         )
 
-        for day in data.AFTERNOON_DAYS:
+        for day in self.config.extended_days:
             marker = self.early_exit_afternoon[day]
             # No last-morning-slot lesson and no mensa on the short day.
             for literal in self._teaching_literals(
@@ -418,7 +422,7 @@ class TimetableModelBuilder:
             # Afternoon lessons only on the marked day, and that day must
             # really carry at least one of them.
             afternoon_literals: List[cp_model.IntVar] = []
-            for slot in data.AFTERNOON_SLOTS:
+            for slot in self.config.afternoon_slots:
                 for literal in self._teaching_literals(teacher, day, slot):
                     self._add("H6", self.model.Add(literal <= marker))
                     afternoon_literals.append(literal)
@@ -433,36 +437,36 @@ class TimetableModelBuilder:
     def _add_no_afternoon_rule(self) -> None:
         """H7 (optional): the "no afternoon" teacher never works an extended
         slot on the configured day. Skipped if the role is not configured."""
-        if data.NO_AFTERNOON_TEACHER is None:
+        if self.config.no_afternoon_teacher is None:
             return
-        for slot in data.AFTERNOON_SLOTS:
+        for slot in self.config.afternoon_slots:
             for literal in self._teaching_literals(
-                data.NO_AFTERNOON_TEACHER, data.NO_AFTERNOON_DAY, slot
+                self.config.no_afternoon_teacher, self.config.no_afternoon_day, slot
             ):
                 self._add("H7", self.model.Add(literal == 0))
 
     def _add_lunch_shift(self) -> None:
         """H8 (optional): one mensa shift per mensa day, shared by exactly N
         teachers. Skipped if the schedule has no 'lunch' slot."""
-        if data.LUNCH_SLOT is None:
+        if self.config.lunch_slot is None:
             return
-        for day in data.AFTERNOON_DAYS:
+        for day in self.config.extended_days:
             literals = [
-                self.lunch[(teacher, day)] for teacher in data.TEACHERS
+                self.lunch[(teacher, day)] for teacher in self.config.teachers
             ]
             self._add(
                 "H8",
                 self.model.Add(
-                    sum(literals) == data.LUNCH_SUPERVISORS_PER_DAY
+                    sum(literals) == self.config.lunch_supervisors_per_day
                 ),
             )
 
     def _add_reinforcement_hours(self) -> None:
         """H10 (optional): the reinforcement teacher's per-class load, from
         the config. Skipped if no reinforcement teacher is configured."""
-        if data.REINFORCEMENT_TEACHER is None:
+        if self.config.reinforcement_teacher is None:
             return
-        for class_, hours in data.REINFORCEMENT_HOURS.items():
+        for class_, hours in self.config.reinforcement_hours.items():
             literals = [
                 var for key, var in self.reinforce.items() if key[0] == class_
             ]
@@ -471,23 +475,23 @@ class TimetableModelBuilder:
     def _add_interval_capacity(self) -> None:
         """H11 (optional): at most one supervisor per class, one class per
         teacher. Skipped if the schedule has no 'interval' slot."""
-        if data.INTERVAL_SLOT is None:
+        if self.config.interval_slot is None:
             return
-        for class_ in data.CLASSES:
-            for day in data.DAYS:
+        for class_ in self.config.classes:
+            for day in self.config.days:
                 literals = [
                     self.interval[(teacher, class_, day)]
-                    for teacher in data.TEACHERS
+                    for teacher in self.config.teachers
                     if (teacher, class_, day) in self.interval
                 ]
                 if literals:
                     self._add("H11", self.model.Add(sum(literals) <= 1))
 
-        for teacher in data.TEACHERS:
-            for day in data.DAYS:
+        for teacher in self.config.teachers:
+            for day in self.config.days:
                 literals = [
                     self.interval[(teacher, class_, day)]
-                    for class_ in data.CLASSES
+                    for class_ in self.config.classes
                     if (teacher, class_, day) in self.interval
                 ]
                 if literals:
@@ -496,13 +500,13 @@ class TimetableModelBuilder:
     def _add_hour_accounting(self) -> None:
         """Weekly load per teacher, in half hours, plus the H12 rule for the
         "teaching only" teacher."""
-        for teacher in data.TEACHERS:
+        for teacher in self.config.teachers:
             teaching = [
                 var
                 for key, var in self.teach.items()
-                if data.COURSES[key[0]].teacher == teacher
+                if self.config.courses[key[0]].teacher == teacher
             ]
-            if teacher == data.REINFORCEMENT_TEACHER:
+            if teacher == self.config.reinforcement_teacher:
                 teaching.extend(self.reinforce.values())
             intervals = [
                 var
@@ -516,15 +520,15 @@ class TimetableModelBuilder:
             self.model.Add(
                 total
                 == 2 * sum(teaching)
-                + data.INTERVAL_CREDIT_HALF_HOURS * sum(intervals)
-                + data.LUNCH_CREDIT_HALF_HOURS * sum(lunches)
+                + self.config.interval_credit_half_hours * sum(intervals)
+                + self.config.lunch_credit_half_hours * sum(lunches)
             )
             self.half_hours[teacher] = total
 
         # H12 (optional): the "teaching only" teacher has 0h of assistance
         # and is pinned exactly at the target load. Skipped if the role is
         # not configured.
-        teaching_only = data.TEACHING_ONLY_TEACHER
+        teaching_only = self.config.teaching_only_teacher
         if teaching_only is not None:
             assistance = [
                 var
@@ -537,7 +541,7 @@ class TimetableModelBuilder:
             self._add(
                 "H12",
                 self.model.Add(
-                    self.half_hours[teaching_only] == data.TARGET_HALF_HOURS
+                    self.half_hours[teaching_only] == self.config.target_half_hours
                 ),
             )
 
@@ -564,16 +568,16 @@ class TimetableModelBuilder:
         create, so an exact-target equality for every teacher is infeasible
         (see ``docs/DECISIONS.md``).  The "teaching only" teacher is excluded,
         pinned exactly by H12."""
-        for teacher in data.TEACHERS:
-            if teacher == data.TEACHING_ONLY_TEACHER:
+        for teacher in self.config.teachers:
+            if teacher == self.config.teaching_only_teacher:
                 continue  # pinned by H12
             delta = self.model.NewIntVar(-200, 200, f"delta_{teacher}")
             self.model.Add(
-                delta == self.half_hours[teacher] - data.TARGET_HALF_HOURS
+                delta == self.half_hours[teacher] - self.config.target_half_hours
             )
             deviation = self.model.NewIntVar(0, 200, f"dev_{teacher}")
             self.model.AddAbsEquality(deviation, delta)
-            target_hours = data.TARGET_HALF_HOURS / 2
+            target_hours = self.config.target_half_hours / 2
             self._register(
                 "monte_ore_target",
                 "soft",
@@ -596,11 +600,11 @@ class TimetableModelBuilder:
         report instead of turning the whole model infeasible (see
         ``docs/DECISIONS.md``). Skipped if the role is not configured.
         """
-        teacher = data.EARLY_EXIT_TEACHER
+        teacher = self.config.early_exit_teacher
         if teacher is None:
             return
-        last_morning_slot = data.MORNING_SLOTS[-1]
-        for day in data.EARLY_EXIT_WEIGHTED_DAYS:
+        last_morning_slot = self.config.morning_slots[-1]
+        for day in self.config.early_exit_weighted_days:
             literals = self._teaching_literals(teacher, day, last_morning_slot)
             if not literals:
                 continue
@@ -621,12 +625,12 @@ class TimetableModelBuilder:
         """MEDIUM: the two extended-day afternoon slots of a class taught by
         the same person. Only meaningful with exactly two afternoon slots
         (the usual "p1 e p2" shape); skipped otherwise."""
-        if len(data.AFTERNOON_SLOTS) != 2:
+        if len(self.config.afternoon_slots) != 2:
             return
-        slot_a, slot_b = data.AFTERNOON_SLOTS
-        holders = list(data.TEACHERS) + [data.EXPERT_LABEL]
-        for class_ in data.CLASSES:
-            for day in data.AFTERNOON_DAYS:
+        slot_a, slot_b = self.config.afternoon_slots
+        holders = list(self.config.teachers) + [self.config.expert_label]
+        for class_ in self.config.classes:
+            for day in self.config.extended_days:
                 same_holder = [
                     self._bool_and(
                         f"same_{class_}_{day}_{holder}",
@@ -659,14 +663,14 @@ class TimetableModelBuilder:
         Generalises the original "s2 or s3" rule (the two teaching slots
         flanking the recess) to whatever slot ids the schedule actually
         uses."""
-        if data.INTERVAL_SLOT is None:
+        if self.config.interval_slot is None:
             return ()
-        order = data.FULL_SLOT_ORDER
-        idx = order.index(data.INTERVAL_SLOT)
+        order = self.config.full_slot_order
+        idx = order.index(self.config.interval_slot)
         neighbors = []
-        if idx > 0 and data.SLOT_KIND.get(order[idx - 1]) == "teaching":
+        if idx > 0 and self.config.slot_kind.get(order[idx - 1]) == "teaching":
             neighbors.append(order[idx - 1])
-        if idx < len(order) - 1 and data.SLOT_KIND.get(order[idx + 1]) == "teaching":
+        if idx < len(order) - 1 and self.config.slot_kind.get(order[idx + 1]) == "teaching":
             neighbors.append(order[idx + 1])
         return tuple(neighbors)
 
@@ -674,7 +678,7 @@ class TimetableModelBuilder:
         """MEDIUM: interval supervised by whoever taught the slot right
         before or right after it in that class. Skipped if there is no
         interval slot."""
-        if data.INTERVAL_SLOT is None:
+        if self.config.interval_slot is None:
             return
         neighbor_slots = self._interval_neighbor_slots()
         for (teacher, class_, day), duty in self.interval.items():
@@ -706,11 +710,11 @@ class TimetableModelBuilder:
     def _add_lunch_preference(self) -> None:
         """MEDIUM: mensa preferably to whoever teaches the slot right before
         or right after it that day. Skipped if there is no lunch slot."""
-        if data.LUNCH_SLOT is None:
+        if self.config.lunch_slot is None:
             return
-        last_morning_slot = data.MORNING_SLOTS[-1]
+        last_morning_slot = self.config.morning_slots[-1]
         first_afternoon_slot = (
-            data.AFTERNOON_SLOTS[0] if data.AFTERNOON_SLOTS else None
+            self.config.afternoon_slots[0] if self.config.afternoon_slots else None
         )
         for (teacher, day), duty in self.lunch.items():
             penalty = self.model.NewBoolVar(f"mensa_pen_{teacher}_{day}")
@@ -733,16 +737,16 @@ class TimetableModelBuilder:
     def _add_subject_spread(self) -> None:
         """SOFT: storia/scienze/geografia on three different days in 3ª-5ª."""
         subjects = ("Storia", "Scienze", "Geografia")
-        for class_ in data.SPREAD_CLASSES:
+        for class_ in self.config.spread_classes:
             per_day: Dict[Tuple[str, str], cp_model.IntVar] = {}
             for subject in subjects:
-                for day in data.DAYS:
+                for day in self.config.days:
                     literals = [
                         self.teach[(index, day, slot)]
-                        for index, course in enumerate(data.COURSES)
+                        for index, course in enumerate(self.config.courses)
                         if course.subject == subject
                         and class_ in course.classes
-                        for slot in data.teaching_slots(day)
+                        for slot in self.config.teaching_slots(day)
                         if (index, day, slot) in self.teach
                     ]
                     per_day[(subject, day)] = self._bool_or(
@@ -750,7 +754,7 @@ class TimetableModelBuilder:
                     )
             for first in range(len(subjects)):
                 for second in range(first + 1, len(subjects)):
-                    for day in data.DAYS:
+                    for day in self.config.days:
                         clash = self._bool_and(
                             f"clash_{class_}_{day}_{first}{second}",
                             [
@@ -772,18 +776,18 @@ class TimetableModelBuilder:
     def _add_single_afternoon_preference(self) -> None:
         """SOFT: at most one afternoon per teacher (HARD, via H6, for the
         early-exit teacher, who is skipped here)."""
-        for teacher in data.TEACHERS:
-            if teacher == data.EARLY_EXIT_TEACHER:
+        for teacher in self.config.teachers:
+            if teacher == self.config.early_exit_teacher:
                 continue
             markers = [
                 self._bool_or(
                     f"pom_{teacher}_{day}",
                     [
                         self.busy[(teacher, day, slot)]
-                        for slot in data.AFTERNOON_SLOTS
+                        for slot in self.config.afternoon_slots
                     ],
                 )
-                for day in data.AFTERNOON_DAYS
+                for day in self.config.extended_days
             ]
             excess = self.model.NewIntVar(
                 0, len(markers), f"pom_excess_{teacher}"
@@ -801,9 +805,9 @@ class TimetableModelBuilder:
 
     def _add_gap_penalties(self) -> None:
         """SOFT: idle slots between two lessons of the same teacher."""
-        for teacher in data.TEACHERS:
-            for day in data.DAYS:
-                slots = data.teaching_slots(day)
+        for teacher in self.config.teachers:
+            for day in self.config.days:
+                slots = self.config.teaching_slots(day)
                 gaps: List[cp_model.IntVar] = []
                 for position, slot in enumerate(slots):
                     if position == 0 or position == len(slots) - 1:
@@ -850,17 +854,17 @@ class TimetableModelBuilder:
     def _add_daily_subject_cap(self) -> None:
         """SOFT: no more than ``daily_subject_soft_cap`` hours of the same
         subject per class per day. Skipped if no cap is configured."""
-        if data.DAILY_SUBJECT_SOFT_CAP is None:
+        if self.config.daily_subject_soft_cap is None:
             return
-        subjects = {course.subject for course in data.COURSES}
-        if data.REINFORCEMENT_SUBJECT is not None:
-            subjects.add(data.REINFORCEMENT_SUBJECT)
+        subjects = {course.subject for course in self.config.courses}
+        if self.config.reinforcement_subject is not None:
+            subjects.add(self.config.reinforcement_subject)
         subjects = sorted(subjects)
-        for class_ in data.CLASSES:
+        for class_ in self.config.classes:
             for subject in subjects:
-                for day in data.DAYS:
+                for day in self.config.days:
                     literals: List[cp_model.IntVar] = []
-                    for index, course in enumerate(data.COURSES):
+                    for index, course in enumerate(self.config.courses):
                         if (
                             course.subject != subject
                             or class_ not in course.classes
@@ -868,21 +872,21 @@ class TimetableModelBuilder:
                             continue
                         literals.extend(
                             self.teach[(index, day, slot)]
-                            for slot in data.teaching_slots(day)
+                            for slot in self.config.teaching_slots(day)
                             if (index, day, slot) in self.teach
                         )
-                    if subject == data.REINFORCEMENT_SUBJECT:
+                    if subject == self.config.reinforcement_subject:
                         literals.extend(
                             self.reinforce[(class_, day, slot)]
-                            for slot in data.teaching_slots(day)
+                            for slot in self.config.teaching_slots(day)
                             if (class_, day, slot) in self.reinforce
                         )
                     fixed = sum(
                         1
-                        for slot in data.teaching_slots(day)
+                        for slot in self.config.teaching_slots(day)
                         if self._expert_subject(class_, day, slot) == subject
                     )
-                    if not literals and fixed <= data.DAILY_SUBJECT_SOFT_CAP:
+                    if not literals and fixed <= self.config.daily_subject_soft_cap:
                         continue
                     excess = self.model.NewIntVar(
                         0,
@@ -891,14 +895,14 @@ class TimetableModelBuilder:
                     )
                     self.model.Add(
                         excess
-                        >= sum(literals) + fixed - data.DAILY_SUBJECT_SOFT_CAP
+                        >= sum(literals) + fixed - self.config.daily_subject_soft_cap
                     )
                     self._register(
                         "max_2h_giorno_stessa_materia",
                         "soft",
                         excess,
                         lambda value, c=class_, s=subject, d=day: (
-                            f"{c}: {value + data.DAILY_SUBJECT_SOFT_CAP} ore di "
+                            f"{c}: {value + self.config.daily_subject_soft_cap} ore di "
                             f"{s} di {d}"
                         ),
                         class_=class_,
@@ -956,7 +960,7 @@ class TimetableModelBuilder:
 
         self.model.Minimize(
             sum(
-                data.WEIGHTS[term.constraint] * term.var
+                self.config.weights[term.constraint] * term.var
                 for term in self.penalties
             )
         )
@@ -970,14 +974,14 @@ class TimetableModelBuilder:
         """Turn solver values into a plain-Python :class:`Solution`."""
         lessons: List[Lesson] = []
 
-        for hour in data.EXPERT_FIXED:
+        for hour in self.config.expert_fixed:
             lessons.append(
                 Lesson(
                     classes=(hour.class_,),
                     day=hour.day,
                     slot=hour.slot,
                     subject=hour.subject,
-                    teacher=data.EXPERT_LABEL,
+                    teacher=self.config.expert_label,
                     activity_type=ACTIVITY_TEACHING,
                     shared_with=hour.shared_with,
                 )
@@ -985,7 +989,7 @@ class TimetableModelBuilder:
 
         for (index, day, slot), var in self.teach.items():
             if solver.Value(var):
-                course = data.COURSES[index]
+                course = self.config.courses[index]
                 lessons.append(
                     Lesson(
                         classes=course.classes,
@@ -1004,8 +1008,8 @@ class TimetableModelBuilder:
                         classes=(class_,),
                         day=day,
                         slot=slot,
-                        subject=data.REINFORCEMENT_SUBJECT,
-                        teacher=data.REINFORCEMENT_TEACHER,
+                        subject=self.config.reinforcement_subject,
+                        teacher=self.config.reinforcement_teacher,
                         activity_type=ACTIVITY_REINFORCEMENT,
                     )
                 )
@@ -1032,16 +1036,16 @@ class TimetableModelBuilder:
         }
         assistance = {
             teacher: (
-                data.INTERVAL_CREDIT_HALF_HOURS
+                self.config.interval_credit_half_hours
                 * sum(1 for duty in interval_duties if duty[0] == teacher)
-                + data.LUNCH_CREDIT_HALF_HOURS
+                + self.config.lunch_credit_half_hours
                 * sum(1 for duty in lunch_duties if duty[0] == teacher)
             )
-            for teacher in data.TEACHERS
+            for teacher in self.config.teachers
         }
         teaching = {
             teacher: half_hours[teacher] - assistance[teacher]
-            for teacher in data.TEACHERS
+            for teacher in self.config.teachers
         }
 
         violations: List[Violation] = []
@@ -1081,7 +1085,7 @@ def build_solver(time_limit: float, log_progress: bool) -> cp_model.CpSolver:
     return solver
 
 
-def diagnose_infeasibility(time_limit: float) -> List[str]:
+def diagnose_infeasibility(config: data.Config, time_limit: float) -> List[str]:
     """Return the HARD groups that make the model infeasible.
 
     First tries CP-SAT's assumption-based unsat core; if the core comes back
@@ -1090,7 +1094,7 @@ def diagnose_infeasibility(time_limit: float) -> List[str]:
     remaining model becomes satisfiable.
     """
     logger.info("Diagnosi infeasibility: ricerca unsat core (assumption-based)")
-    builder = TimetableModelBuilder(optimize=False, post_assumptions=True)
+    builder = TimetableModelBuilder(config, optimize=False, post_assumptions=True)
     model = builder.build()
     solver = build_solver(time_limit, log_progress=False)
     solver.Solve(model)
@@ -1113,16 +1117,16 @@ def diagnose_infeasibility(time_limit: float) -> List[str]:
     logger.warning(
         "Unsat core vuoto: passo a rilassamento greedy (piu' lento)"
     )
-    return _greedy_relaxation(time_limit)
+    return _greedy_relaxation(config, time_limit)
 
 
-def _greedy_relaxation(time_limit: float) -> List[str]:
+def _greedy_relaxation(config: data.Config, time_limit: float) -> List[str]:
     """Drop HARD groups one by one until the model becomes feasible."""
     dropped: List[str] = []
     for group in reversed(RELAXABLE_HARD_GROUPS):
         dropped.append(group)
         logger.debug("Rilassamento greedy: provo a rilasciare %s", dropped)
-        builder = TimetableModelBuilder(optimize=False, post_assumptions=False)
+        builder = TimetableModelBuilder(config, optimize=False, post_assumptions=False)
         model = builder.build()
         for kept in RELAXABLE_HARD_GROUPS:
             model.Add(builder.assumptions[kept] == (0 if kept in dropped else 1))

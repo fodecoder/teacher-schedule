@@ -4,13 +4,12 @@ Everything that changes from one school (or school year) to the next --
 teachers, classes, the time grid itself (days, slots, which days run long),
 fixed expert hours, teaching loads, reinforcement hours, per-role constraints,
 objective weights -- lives in an external YAML file and is read at runtime by
-``load_config``. It validates that file and publishes its contents as module
-attributes (``data.CLASSES``, ``data.COURSES``, ``data.DAYS``, ``data.WEIGHTS``,
-...) so the rest of the code base can keep importing ``data`` and reading
-plain names. Nothing in this module is called before ``load_config`` has run;
-every module attribute that depends on the config raises a clear
-``RuntimeError`` if used earlier (see ``teaching_slots`` below), instead of
-silently reading a stale value.
+``load_config``. It validates that file and returns it as a single
+:class:`Config` instance; the rest of the code base receives that instance
+explicitly (as a constructor/function argument) instead of importing ``data``
+and reading module-level names, so more than one config can be loaded in the
+same process and a missing config is a normal Python error (a missing
+argument, not a stale/undefined attribute).
 
 The time grid supports exactly two kinds of day: "base" days (a single block
 of teaching slots) and "extended" days (the same block, plus an interval,
@@ -146,7 +145,7 @@ class Config:
     interval_slot: Optional[str]
     lunch_slot: Optional[str]
     consecutive_pairs: Tuple[Tuple[str, str], ...]
-    teaching_slots_fn: Callable[[str], Tuple[str, ...]]
+    _teaching_slots_fn: Callable[[str], Tuple[str, ...]]
     weekly_teaching_slots: int
 
     # -- people --
@@ -178,6 +177,10 @@ class Config:
     no_afternoon_day: Optional[str]
     teaching_only_teacher: Optional[str]
 
+    def teaching_slots(self, day: str) -> Tuple[str, ...]:
+        """Return the teaching slots available on ``day``."""
+        return self._teaching_slots_fn(day)
+
 
 #: Objective weight keys the model expects; the config must provide all of them.
 _REQUIRED_WEIGHT_KEYS: Tuple[str, ...] = (
@@ -191,60 +194,6 @@ _REQUIRED_WEIGHT_KEYS: Tuple[str, ...] = (
     "buchi_orari",
     "max_2h_giorno_stessa_materia",
 )
-
-#: Module attributes published by :func:`load_config`. Kept explicit so a stale
-#: import fails loudly instead of reading a value from a previous load.
-_PUBLISHED_ATTRS: Tuple[str, ...] = (
-    "CONFIG",
-    "DAYS",
-    "AFTERNOON_DAYS",
-    "SLOT_METADATA",
-    "FULL_SLOT_ORDER",
-    "SLOT_KIND",
-    "MORNING_SLOTS",
-    "AFTERNOON_SLOTS",
-    "INTERVAL_SLOT",
-    "LUNCH_SLOT",
-    "CONSECUTIVE_PAIRS",
-    "WEEKLY_TEACHING_SLOTS",
-    "CLASSES",
-    "TEACHERS",
-    "EXPERT_LABEL",
-    "EXPERT_FIXED",
-    "EXPERT_COVERS_INTERVAL",
-    "COURSES",
-    "REINFORCEMENT_TEACHER",
-    "REINFORCEMENT_SUBJECT",
-    "REINFORCEMENT_HOURS",
-    "TWO_HOUR_SUBJECTS",
-    "SPREAD_CLASSES",
-    "TARGET_HALF_HOURS",
-    "INTERVAL_CREDIT_HALF_HOURS",
-    "LUNCH_CREDIT_HALF_HOURS",
-    "LUNCH_SUPERVISORS_PER_DAY",
-    "DAILY_SUBJECT_SOFT_CAP",
-    "WEIGHTS",
-    "EARLY_EXIT_TEACHER",
-    "EARLY_EXIT_WEIGHTED_DAYS",
-    "NO_AFTERNOON_TEACHER",
-    "NO_AFTERNOON_DAY",
-    "TEACHING_ONLY_TEACHER",
-)
-
-
-def teaching_slots(day: str) -> Tuple[str, ...]:
-    """Return the teaching slots available on ``day``.
-
-    This is a placeholder: :func:`load_config` overwrites this module
-    attribute with a closure over the loaded schedule. Calling it before any
-    config has been loaded is a programming error, so it fails loudly instead
-    of silently returning an empty/hard-coded grid.
-    """
-    raise RuntimeError(
-        "data.teaching_slots() usato prima di data.load_config(): la griglia "
-        "oraria non e' ancora stata caricata da un file di configurazione."
-    )
-
 
 # --------------------------------------------------------------------------
 # Parsing helpers
@@ -489,12 +438,11 @@ def _parse_expert_fixed(
 
 
 def load_config(path: "str | Path") -> Config:
-    """Read, validate and publish the school-specific config from ``path``.
+    """Read, validate and return the school-specific config from ``path``.
 
-    On success every name in ``_PUBLISHED_ATTRS`` becomes a module attribute
-    and the :class:`Config` is returned. Raises :class:`ConfigError` (a
-    ``ValueError``) with a specific message on any missing key or broken
-    cross-reference; raises ``FileNotFoundError`` if ``path`` does not exist.
+    Raises :class:`ConfigError` (a ``ValueError``) with a specific message on
+    any missing key or broken cross-reference; raises ``FileNotFoundError``
+    if ``path`` does not exist.
     """
     path = Path(path)
     logger.info("Lettura configurazione da %s", path)
@@ -674,7 +622,7 @@ def load_config(path: "str | Path") -> Config:
         interval_slot=schedule.interval_slot,
         lunch_slot=schedule.lunch_slot,
         consecutive_pairs=schedule.consecutive_pairs,
-        teaching_slots_fn=schedule.teaching_slots_fn,
+        _teaching_slots_fn=schedule.teaching_slots_fn,
         weekly_teaching_slots=schedule.weekly_teaching_slots,
         classes=classes,
         teachers=teachers,
@@ -699,7 +647,6 @@ def load_config(path: "str | Path") -> Config:
         no_afternoon_day=no_pm_day,
         teaching_only_teacher=teach_only_teacher,
     )
-    _publish(config)
     logger.info(
         "Configurazione valida: %d classi, %d docenti, %d corsi, %d ore "
         "esperti fisse",
@@ -720,41 +667,3 @@ def load_config(path: "str | Path") -> Config:
     return config
 
 
-def _publish(config: Config) -> None:
-    """Expose ``config`` as flat module attributes for the rest of the code."""
-    g = globals()
-    g["CONFIG"] = config
-    g["DAYS"] = config.days
-    g["AFTERNOON_DAYS"] = config.extended_days
-    g["SLOT_METADATA"] = config.slot_metadata
-    g["FULL_SLOT_ORDER"] = config.full_slot_order
-    g["SLOT_KIND"] = config.slot_kind
-    g["MORNING_SLOTS"] = config.morning_slots
-    g["AFTERNOON_SLOTS"] = config.afternoon_slots
-    g["INTERVAL_SLOT"] = config.interval_slot
-    g["LUNCH_SLOT"] = config.lunch_slot
-    g["CONSECUTIVE_PAIRS"] = config.consecutive_pairs
-    g["WEEKLY_TEACHING_SLOTS"] = config.weekly_teaching_slots
-    g["teaching_slots"] = config.teaching_slots_fn
-    g["CLASSES"] = config.classes
-    g["TEACHERS"] = config.teachers
-    g["EXPERT_LABEL"] = config.expert_label
-    g["EXPERT_FIXED"] = config.expert_fixed
-    g["EXPERT_COVERS_INTERVAL"] = config.expert_covers_interval
-    g["COURSES"] = config.courses
-    g["REINFORCEMENT_TEACHER"] = config.reinforcement_teacher
-    g["REINFORCEMENT_SUBJECT"] = config.reinforcement_subject
-    g["REINFORCEMENT_HOURS"] = config.reinforcement_hours
-    g["TWO_HOUR_SUBJECTS"] = config.two_hour_subjects
-    g["SPREAD_CLASSES"] = config.spread_classes
-    g["TARGET_HALF_HOURS"] = config.target_half_hours
-    g["INTERVAL_CREDIT_HALF_HOURS"] = config.interval_credit_half_hours
-    g["LUNCH_CREDIT_HALF_HOURS"] = config.lunch_credit_half_hours
-    g["LUNCH_SUPERVISORS_PER_DAY"] = config.lunch_supervisors_per_day
-    g["DAILY_SUBJECT_SOFT_CAP"] = config.daily_subject_soft_cap
-    g["WEIGHTS"] = config.weights
-    g["EARLY_EXIT_TEACHER"] = config.early_exit_teacher
-    g["EARLY_EXIT_WEIGHTED_DAYS"] = config.early_exit_weighted_days
-    g["NO_AFTERNOON_TEACHER"] = config.no_afternoon_teacher
-    g["NO_AFTERNOON_DAY"] = config.no_afternoon_day
-    g["TEACHING_ONLY_TEACHER"] = config.teaching_only_teacher

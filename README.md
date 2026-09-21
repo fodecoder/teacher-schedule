@@ -8,16 +8,16 @@ le preferenze MEDIUM/SOFT diventano termini penalizzati di una funzione
 obiettivo pesata. L'output è un JSON con l'orario per classe e per docente e
 l'elenco dei vincoli eventualmente violati.
 
-Il modello è generico: la griglia oraria (4 mattine corte + 2 giorni lunghi con
-mensa) è fissa nel codice, tutto il resto — docenti, classi, ore fisse degli
-esperti, monte ore dei titolari, ore di potenziamento, pesi — vive in un file
-di configurazione YAML.
+Il modello è generico: la griglia oraria stessa (giorni, slot, quali giorni
+sono estesi) vive nel file di configurazione YAML insieme a tutto il resto —
+docenti, classi, ore fisse degli esperti, monte ore dei titolari, ore di
+potenziamento, pesi.
 
 ## Struttura
 
 ```
 scripts/
-  data.py         griglia oraria (invariante) + loader del config YAML
+  data.py         loader e validazione del config YAML (Config, teaching_slots(), ...)
   model.py        modello CP-SAT (variabili, vincoli, obiettivo)
   main.py         entry point: carica il config, risolve, valida, scrive il JSON
   output.py       serializzazione secondo docs/schema_output.json

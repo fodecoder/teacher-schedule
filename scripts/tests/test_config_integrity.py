@@ -14,28 +14,26 @@ import pytest
 
 import data
 
-pytestmark = pytest.mark.usefixtures("config")
-
 WEEKLY = 24  # teaching slots per class, from the grid
 
 
-def _titolari_hours(class_: str) -> int:
-    return sum(c.hours for c in data.COURSES if class_ in c.classes)
+def _titolari_hours(config: data.Config, class_: str) -> int:
+    return sum(c.hours for c in config.courses if class_ in c.classes)
 
 
-def _expert_hours(class_: str) -> int:
-    return sum(1 for e in data.EXPERT_FIXED if e.class_ == class_)
+def _expert_hours(config: data.Config, class_: str) -> int:
+    return sum(1 for e in config.expert_fixed if e.class_ == class_)
 
 
-def test_every_class_has_24_teaching_slots() -> None:
-    assert data.WEEKLY_TEACHING_SLOTS == WEEKLY
+def test_every_class_has_24_teaching_slots(config: data.Config) -> None:
+    assert config.weekly_teaching_slots == WEEKLY
 
 
-def test_per_class_hours_balance_to_24() -> None:
-    for class_ in data.CLASSES:
-        titolari = _titolari_hours(class_)
-        expert = _expert_hours(class_)
-        reinforcement = data.REINFORCEMENT_HOURS.get(class_, 0)
+def test_per_class_hours_balance_to_24(config: data.Config) -> None:
+    for class_ in config.classes:
+        titolari = _titolari_hours(config, class_)
+        expert = _expert_hours(config, class_)
+        reinforcement = config.reinforcement_hours.get(class_, 0)
         total = titolari + expert + reinforcement
         assert total == WEEKLY, (
             f"{class_}: titolari {titolari} + esperti {expert} + "
@@ -43,74 +41,78 @@ def test_per_class_hours_balance_to_24() -> None:
         )
 
 
-def test_reinforcement_fills_exactly_the_leftover_slots() -> None:
-    for class_, hours in data.REINFORCEMENT_HOURS.items():
-        leftover = WEEKLY - _titolari_hours(class_) - _expert_hours(class_)
+def test_reinforcement_fills_exactly_the_leftover_slots(
+    config: data.Config,
+) -> None:
+    for class_, hours in config.reinforcement_hours.items():
+        leftover = (
+            WEEKLY - _titolari_hours(config, class_) - _expert_hours(config, class_)
+        )
         assert hours == leftover, (
             f"potenziamento in {class_}: {hours}h contro {leftover}h liberi"
         )
 
 
-def test_total_hours_across_all_classes() -> None:
-    titolari = sum(_titolari_hours(c) for c in data.CLASSES)
-    expert = sum(_expert_hours(c) for c in data.CLASSES)
-    reinforcement = sum(data.REINFORCEMENT_HOURS.values())
-    assert titolari + expert + reinforcement == WEEKLY * len(data.CLASSES)
+def test_total_hours_across_all_classes(config: data.Config) -> None:
+    titolari = sum(_titolari_hours(config, c) for c in config.classes)
+    expert = sum(_expert_hours(config, c) for c in config.classes)
+    reinforcement = sum(config.reinforcement_hours.values())
+    assert titolari + expert + reinforcement == WEEKLY * len(config.classes)
 
 
-def test_courses_reference_known_teachers_and_classes() -> None:
-    for course in data.COURSES:
-        assert course.teacher in data.TEACHERS, course.label
+def test_courses_reference_known_teachers_and_classes(config: data.Config) -> None:
+    for course in config.courses:
+        assert course.teacher in config.teachers, course.label
         for class_ in course.classes:
-            assert class_ in data.CLASSES, course.label
+            assert class_ in config.classes, course.label
         assert course.hours >= 1
 
 
-def test_expert_hours_have_no_duplicate_slot() -> None:
+def test_expert_hours_have_no_duplicate_slot(config: data.Config) -> None:
     seen = set()
-    for hour in data.EXPERT_FIXED:
+    for hour in config.expert_fixed:
         key = (hour.class_, hour.day, hour.slot)
         assert key not in seen, key
         seen.add(key)
-        assert hour.slot in data.teaching_slots(hour.day)
+        assert hour.slot in config.teaching_slots(hour.day)
 
 
-def test_role_teachers_exist() -> None:
+def test_role_teachers_exist(config: data.Config) -> None:
     for teacher in (
-        data.EARLY_EXIT_TEACHER,
-        data.NO_AFTERNOON_TEACHER,
-        data.TEACHING_ONLY_TEACHER,
-        data.REINFORCEMENT_TEACHER,
+        config.early_exit_teacher,
+        config.no_afternoon_teacher,
+        config.teaching_only_teacher,
+        config.reinforcement_teacher,
     ):
-        assert teacher in data.TEACHERS
+        assert teacher in config.teachers
 
 
-def test_teaching_only_teacher_is_already_at_target() -> None:
+def test_teaching_only_teacher_is_already_at_target(config: data.Config) -> None:
     teaching = sum(
-        c.hours for c in data.COURSES if c.teacher == data.TEACHING_ONLY_TEACHER
+        c.hours for c in config.courses if c.teacher == config.teaching_only_teacher
     )
-    assert teaching * 2 == data.TARGET_HALF_HOURS, (
+    assert teaching * 2 == config.target_half_hours, (
         f"il docente 'solo didattica' ha {teaching}h di didattica, il target "
-        f"è {data.TARGET_HALF_HOURS / 2:g}h: 0h di assistenza sarebbe "
+        f"è {config.target_half_hours / 2:g}h: 0h di assistenza sarebbe "
         "infattibile"
     )
 
 
-def test_spread_and_two_hour_subjects_are_consistent() -> None:
-    for class_ in data.SPREAD_CLASSES:
-        assert class_ in data.CLASSES
+def test_spread_and_two_hour_subjects_are_consistent(config: data.Config) -> None:
+    for class_ in config.spread_classes:
+        assert class_ in config.classes
     # Ogni corso in una materia "da 2h" con esattamente 2 ore è ciò che il
     # vincolo di adiacenza (H5) governa; nessun corso di quelle materie deve
     # avere un monte ore che il modello non sa spezzare (1h o 2h).
-    for course in data.COURSES:
-        if course.subject in data.TWO_HOUR_SUBJECTS:
+    for course in config.courses:
+        if course.subject in config.two_hour_subjects:
             assert course.hours in (1, 2), course.label
 
 
-def test_weighted_exit_days_are_not_afternoon_days() -> None:
-    for day in data.EARLY_EXIT_WEIGHTED_DAYS:
-        assert day in data.DAYS
-        assert day not in data.AFTERNOON_DAYS, (
+def test_weighted_exit_days_are_not_afternoon_days(config: data.Config) -> None:
+    for day in config.early_exit_weighted_days:
+        assert day in config.days
+        assert day not in config.extended_days, (
             f"{day}: l'uscita anticipata pesata ha senso solo nei giorni "
             "senza pomeriggio"
         )

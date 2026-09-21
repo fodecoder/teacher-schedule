@@ -19,19 +19,6 @@ from ortools.sat.python import cp_model
 import data
 import model
 
-_EXAMPLE_CONFIG = Path(__file__).resolve().parents[1] / "config.example.yaml"
-
-
-@pytest.fixture(autouse=True)
-def _restore_example_config():
-    """Every test here calls ``data.load_config`` directly with its own
-    throwaway file, which overwrites the module-global state (``data.DAYS``
-    & co.) for the whole process. Reload the shared example config afterward
-    so other test modules are unaffected regardless of execution order."""
-    yield
-    data.load_config(_EXAMPLE_CONFIG)
-
-
 _MINIMAL_CONFIG = """
 schedule:
   days: ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì"]
@@ -95,10 +82,10 @@ def test_single_block_schedule_with_no_optional_roles_loads(
     assert config.reinforcement_hours == {}
 
     for day in config.days:
-        assert data.teaching_slots(day) == (
+        assert config.teaching_slots(day) == (
             "m1", "m2", "m3", "m4", "m5",
         )
-    assert data.WEEKLY_TEACHING_SLOTS == 5 * 5
+    assert config.weekly_teaching_slots == 5 * 5
 
 
 def test_extended_only_slot_requires_extended_days(tmp_path: Path) -> None:
@@ -214,9 +201,9 @@ def test_h6_binds_afternoon_even_with_no_last_morning_slot_literals(
     leaving the marker disconnected from real afternoon lessons and the
     model spuriously FEASIBLE.
     """
-    data.load_config(_write(tmp_path, _EARLY_EXIT_NO_OWN_COURSES_CONFIG))
+    config = data.load_config(_write(tmp_path, _EARLY_EXIT_NO_OWN_COURSES_CONFIG))
 
-    builder = model.TimetableModelBuilder(optimize=True)
+    builder = model.TimetableModelBuilder(config, optimize=True)
     cp_sat_model = builder.build()
     solver = model.build_solver(time_limit=5.0, log_progress=False)
     status = solver.Solve(cp_sat_model)

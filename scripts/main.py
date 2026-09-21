@@ -69,24 +69,24 @@ def _assert_project_venv() -> None:
 # --------------------------------------------------------------------------
 
 
-def _teaching_lessons(solution: Solution) -> List[Lesson]:
+def _teaching_lessons(config: data.Config, solution: Solution) -> List[Lesson]:
     return [
         lesson
         for lesson in solution.lessons
-        if lesson.teacher != data.EXPERT_LABEL
+        if lesson.teacher != config.expert_label
     ]
 
 
-def _check_class_coverage(solution: Solution) -> List[Dict[str, str]]:
+def _check_class_coverage(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     occupancy: Counter = Counter()
     for lesson in solution.lessons:
         for class_ in lesson.classes:
             occupancy[(class_, lesson.day, lesson.slot)] += 1
 
     problems: List[Dict[str, str]] = []
-    for class_ in data.CLASSES:
-        for day in data.DAYS:
-            for slot in data.teaching_slots(day):
+    for class_ in config.classes:
+        for day in config.days:
+            for slot in config.teaching_slots(day):
                 count = occupancy[(class_, day, slot)]
                 if count != 1:
                     problems.append(
@@ -101,9 +101,9 @@ def _check_class_coverage(solution: Solution) -> List[Dict[str, str]]:
     return problems
 
 
-def _check_teacher_uniqueness(solution: Solution) -> List[Dict[str, str]]:
+def _check_teacher_uniqueness(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     occupancy: Counter = Counter()
-    for lesson in _teaching_lessons(solution):
+    for lesson in _teaching_lessons(config, solution):
         occupancy[(lesson.teacher, lesson.day, lesson.slot)] += 1
     return [
         {
@@ -115,15 +115,15 @@ def _check_teacher_uniqueness(solution: Solution) -> List[Dict[str, str]]:
     ]
 
 
-def _check_course_hours(solution: Solution) -> List[Dict[str, str]]:
+def _check_course_hours(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     counts: Counter = Counter()
-    for lesson in _teaching_lessons(solution):
+    for lesson in _teaching_lessons(config, solution):
         if lesson.activity_type == model_module.ACTIVITY_REINFORCEMENT:
             continue
         counts[(lesson.teacher, lesson.classes, lesson.subject)] += 1
 
     problems: List[Dict[str, str]] = []
-    for course in data.COURSES:
+    for course in config.courses:
         key = (course.teacher, course.classes, course.subject)
         found = counts.pop(key, 0)
         if found != course.hours:
@@ -148,10 +148,10 @@ def _check_course_hours(solution: Solution) -> List[Dict[str, str]]:
         )
 
     reinforcement: Counter = Counter()
-    for lesson in _teaching_lessons(solution):
+    for lesson in _teaching_lessons(config, solution):
         if lesson.activity_type == model_module.ACTIVITY_REINFORCEMENT:
             reinforcement[lesson.classes[0]] += 1
-    for class_, hours in data.REINFORCEMENT_HOURS.items():
+    for class_, hours in config.reinforcement_hours.items():
         found = reinforcement.pop(class_, 0)
         if found != hours:
             problems.append(
@@ -173,15 +173,15 @@ def _check_course_hours(solution: Solution) -> List[Dict[str, str]]:
     return problems
 
 
-def _check_expert_hours(solution: Solution) -> List[Dict[str, str]]:
+def _check_expert_hours(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     scheduled = {
         (lesson.classes[0], lesson.day, lesson.slot, lesson.subject)
         for lesson in solution.lessons
-        if lesson.teacher == data.EXPERT_LABEL
+        if lesson.teacher == config.expert_label
     }
     expected = {
         (hour.class_, hour.day, hour.slot, hour.subject)
-        for hour in data.EXPERT_FIXED
+        for hour in config.expert_fixed
     }
     problems = [
         {
@@ -199,9 +199,9 @@ def _check_expert_hours(solution: Solution) -> List[Dict[str, str]]:
     )
 
     blocked = {
-        (hour.class_, hour.day, hour.slot) for hour in data.EXPERT_FIXED
+        (hour.class_, hour.day, hour.slot) for hour in config.expert_fixed
     }
-    for lesson in _teaching_lessons(solution):
+    for lesson in _teaching_lessons(config, solution):
         for class_ in lesson.classes:
             if (class_, lesson.day, lesson.slot) in blocked:
                 problems.append(
@@ -216,18 +216,18 @@ def _check_expert_hours(solution: Solution) -> List[Dict[str, str]]:
     return problems
 
 
-def _check_two_hour_adjacency(solution: Solution) -> List[Dict[str, str]]:
+def _check_two_hour_adjacency(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     placements: Dict[Tuple[str, Tuple[str, ...], str], List[Lesson]] = (
         defaultdict(list)
     )
-    for lesson in _teaching_lessons(solution):
+    for lesson in _teaching_lessons(config, solution):
         placements[(lesson.teacher, lesson.classes, lesson.subject)].append(
             lesson
         )
 
     problems: List[Dict[str, str]] = []
-    for course in data.COURSES:
-        if course.hours != 2 or course.subject not in data.TWO_HOUR_SUBJECTS:
+    for course in config.courses:
+        if course.hours != 2 or course.subject not in config.two_hour_subjects:
             continue
         lessons = placements.get(
             (course.teacher, course.classes, course.subject), []
@@ -235,10 +235,10 @@ def _check_two_hour_adjacency(solution: Solution) -> List[Dict[str, str]]:
         if len(lessons) != 2:
             continue  # already reported by the hour check
         first, second = sorted(
-            lessons, key=lambda item: data.FULL_SLOT_ORDER.index(item.slot)
+            lessons, key=lambda item: config.full_slot_order.index(item.slot)
         )
         pair = (first.slot, second.slot)
-        if first.day != second.day or pair not in data.CONSECUTIVE_PAIRS:
+        if first.day != second.day or pair not in config.consecutive_pairs:
             problems.append(
                 {
                     "constraint": "H5",
@@ -251,18 +251,18 @@ def _check_two_hour_adjacency(solution: Solution) -> List[Dict[str, str]]:
     return problems
 
 
-def _check_early_exit(solution: Solution) -> List[Dict[str, str]]:
+def _check_early_exit(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     """H6 (optional): skipped entirely if the role is not configured."""
-    teacher = data.EARLY_EXIT_TEACHER
+    teacher = config.early_exit_teacher
     if teacher is None:
         return []
-    last_morning_slot = data.MORNING_SLOTS[-1]
+    last_morning_slot = config.morning_slots[-1]
     problems: List[Dict[str, str]] = []
 
     afternoons = {
         lesson.day
-        for lesson in _teaching_lessons(solution)
-        if lesson.teacher == teacher and lesson.slot in data.AFTERNOON_SLOTS
+        for lesson in _teaching_lessons(config, solution)
+        if lesson.teacher == teacher and lesson.slot in config.afternoon_slots
     }
     if len(afternoons) != 1:
         problems.append(
@@ -288,8 +288,8 @@ def _check_early_exit(solution: Solution) -> List[Dict[str, str]]:
     # The weighted-exit days (never afternoon days) are deliberately excluded
     # here: the 11:40 departure is unsatisfiable there and is tracked as a
     # weighted goal instead.
-    short_days = {day for day in data.AFTERNOON_DAYS if day != long_day}
-    for lesson in _teaching_lessons(solution):
+    short_days = {day for day in config.extended_days if day != long_day}
+    for lesson in _teaching_lessons(config, solution):
         if (
             lesson.teacher == teacher
             and lesson.slot == last_morning_slot
@@ -318,10 +318,10 @@ def _check_early_exit(solution: Solution) -> List[Dict[str, str]]:
     return problems
 
 
-def _check_no_afternoon(solution: Solution) -> List[Dict[str, str]]:
+def _check_no_afternoon(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     """H7 (optional): skipped entirely if the role is not configured."""
-    teacher = data.NO_AFTERNOON_TEACHER
-    day = data.NO_AFTERNOON_DAY
+    teacher = config.no_afternoon_teacher
+    day = config.no_afternoon_day
     if teacher is None:
         return []
     return [
@@ -332,22 +332,22 @@ def _check_no_afternoon(solution: Solution) -> List[Dict[str, str]]:
                 f"({lesson.subject} in {'+'.join(lesson.classes)})"
             ),
         }
-        for lesson in _teaching_lessons(solution)
+        for lesson in _teaching_lessons(config, solution)
         if lesson.teacher == teacher
         and lesson.day == day
-        and lesson.slot in data.AFTERNOON_SLOTS
+        and lesson.slot in config.afternoon_slots
     ]
 
 
-def _check_co_teaching(solution: Solution) -> List[Dict[str, str]]:
+def _check_co_teaching(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     """H9: every co-taught course keeps its classes on one shared lesson."""
     problems: List[Dict[str, str]] = []
-    for course in data.COURSES:
+    for course in config.courses:
         if not course.is_co_taught:
             continue
         matched = [
             lesson
-            for lesson in _teaching_lessons(solution)
+            for lesson in _teaching_lessons(config, solution)
             if lesson.teacher == course.teacher
             and lesson.subject == course.subject
             and set(lesson.classes) == set(course.classes)
@@ -366,19 +366,19 @@ def _check_co_teaching(solution: Solution) -> List[Dict[str, str]]:
     return problems
 
 
-def _check_assistance(solution: Solution) -> List[Dict[str, str]]:
+def _check_assistance(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     problems: List[Dict[str, str]] = []
 
-    if data.LUNCH_SLOT is not None:
+    if config.lunch_slot is not None:
         per_day = Counter(day for _, day in solution.lunch_duties)
-        for day in data.AFTERNOON_DAYS:
-            if per_day[day] != data.LUNCH_SUPERVISORS_PER_DAY:
+        for day in config.extended_days:
+            if per_day[day] != config.lunch_supervisors_per_day:
                 problems.append(
                     {
                         "constraint": "H8",
                         "detail": (
                             f"mensa di {day}: {per_day[day]} docenti invece "
-                            f"di {data.LUNCH_SUPERVISORS_PER_DAY}"
+                            f"di {config.lunch_supervisors_per_day}"
                         ),
                     }
                 )
@@ -411,7 +411,7 @@ def _check_assistance(solution: Solution) -> List[Dict[str, str]]:
                 }
             )
     for _, class_, day in solution.interval_duties:
-        if (class_, day) in data.EXPERT_COVERS_INTERVAL:
+        if (class_, day) in config.expert_covers_interval:
             problems.append(
                 {
                     "constraint": "H11",
@@ -421,13 +421,13 @@ def _check_assistance(solution: Solution) -> List[Dict[str, str]]:
                 }
             )
 
-    teaching_only = data.TEACHING_ONLY_TEACHER
+    teaching_only = config.teaching_only_teacher
     if teaching_only is not None:
         assistance = output.hours_from_half(
             solution.assistance_half_hours[teaching_only]
         )
         total = output.hours_from_half(solution.half_hours[teaching_only])
-        target = output.hours_from_half(data.TARGET_HALF_HOURS)
+        target = output.hours_from_half(config.target_half_hours)
         if solution.assistance_half_hours[teaching_only] != 0:
             problems.append(
                 {
@@ -438,7 +438,7 @@ def _check_assistance(solution: Solution) -> List[Dict[str, str]]:
                     ),
                 }
             )
-        if solution.half_hours[teaching_only] != data.TARGET_HALF_HOURS:
+        if solution.half_hours[teaching_only] != config.target_half_hours:
             problems.append(
                 {
                     "constraint": "H12",
@@ -448,13 +448,13 @@ def _check_assistance(solution: Solution) -> List[Dict[str, str]]:
     return problems
 
 
-def _check_hour_accounting(solution: Solution) -> List[Dict[str, str]]:
+def _check_hour_accounting(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     """Recompute every load from the extracted schedule, not from the model."""
     problems: List[Dict[str, str]] = []
-    for teacher in data.TEACHERS:
+    for teacher in config.teachers:
         teaching = sum(
             1
-            for lesson in _teaching_lessons(solution)
+            for lesson in _teaching_lessons(config, solution)
             if lesson.teacher == teacher
         )
         intervals = sum(
@@ -463,8 +463,8 @@ def _check_hour_accounting(solution: Solution) -> List[Dict[str, str]]:
         lunches = sum(1 for duty in solution.lunch_duties if duty[0] == teacher)
         recomputed = (
             2 * teaching
-            + data.INTERVAL_CREDIT_HALF_HOURS * intervals
-            + data.LUNCH_CREDIT_HALF_HOURS * lunches
+            + config.interval_credit_half_hours * intervals
+            + config.lunch_credit_half_hours * lunches
         )
         if recomputed != solution.half_hours[teacher]:
             problems.append(
@@ -481,19 +481,19 @@ def _check_hour_accounting(solution: Solution) -> List[Dict[str, str]]:
     return problems
 
 
-def validate(solution: Solution) -> List[Dict[str, str]]:
+def validate(config: data.Config, solution: Solution) -> List[Dict[str, str]]:
     """Run every HARD check on the extracted solution."""
     problems: List[Dict[str, str]] = []
-    problems.extend(_check_expert_hours(solution))
-    problems.extend(_check_class_coverage(solution))
-    problems.extend(_check_teacher_uniqueness(solution))
-    problems.extend(_check_course_hours(solution))
-    problems.extend(_check_two_hour_adjacency(solution))
-    problems.extend(_check_early_exit(solution))
-    problems.extend(_check_no_afternoon(solution))
-    problems.extend(_check_co_teaching(solution))
-    problems.extend(_check_assistance(solution))
-    problems.extend(_check_hour_accounting(solution))
+    problems.extend(_check_expert_hours(config, solution))
+    problems.extend(_check_class_coverage(config, solution))
+    problems.extend(_check_teacher_uniqueness(config, solution))
+    problems.extend(_check_course_hours(config, solution))
+    problems.extend(_check_two_hour_adjacency(config, solution))
+    problems.extend(_check_early_exit(config, solution))
+    problems.extend(_check_no_afternoon(config, solution))
+    problems.extend(_check_co_teaching(config, solution))
+    problems.extend(_check_assistance(config, solution))
+    problems.extend(_check_hour_accounting(config, solution))
     return problems
 
 
@@ -510,21 +510,21 @@ def _cell(text: str) -> str:
     return text.ljust(CELL_WIDTH)
 
 
-def _print_grid(title: str, rows: Dict[str, Dict[str, str]]) -> None:
+def _print_grid(config: data.Config, title: str, rows: Dict[str, Dict[str, str]]) -> None:
     print(f"\n{title}")
     header = "giorno".ljust(12) + "".join(
-        _cell(slot) for slot in data.FULL_SLOT_ORDER
+        _cell(slot) for slot in config.full_slot_order
     )
     print(header)
     print("-" * len(header))
-    for day in data.DAYS:
+    for day in config.days:
         line = day.ljust(12)
-        for slot in data.FULL_SLOT_ORDER:
+        for slot in config.full_slot_order:
             line += _cell(rows.get(day, {}).get(slot, "—"))
         print(line.rstrip())
 
 
-def print_report(solution: Solution, payload: Dict[str, object]) -> None:
+def print_report(config: data.Config, solution: Solution, payload: Dict[str, object]) -> None:
     """Print the whole timetable and the constraint outcome to stdout."""
     print("=" * 78)
     print(f"ORARIO SCOLASTICO — risultato CP-SAT (v{__version__})")
@@ -533,7 +533,7 @@ def print_report(solution: Solution, payload: Dict[str, object]) -> None:
     print(f"Virtual env  : {sys.prefix}")
     print(f"Stato solver : {solution.status}")
     print(f"Obiettivo    : {solution.objective_value}")
-    if data.EARLY_EXIT_TEACHER is not None:
+    if config.early_exit_teacher is not None:
         print(
             f"Giorno esteso 'lungo' (uscita anticipata): "
             f"{solution.early_exit_afternoon_day}"
@@ -544,7 +544,7 @@ def print_report(solution: Solution, payload: Dict[str, object]) -> None:
         (class_, day): teacher
         for teacher, class_, day in solution.interval_duties
     }
-    for class_ in data.CLASSES:
+    for class_ in config.classes:
         rows = {
             day: {
                 slot: f"{cell['subject']} ({cell['teacher']})"
@@ -554,17 +554,17 @@ def print_report(solution: Solution, payload: Dict[str, object]) -> None:
         }
         # by_class holds teaching slots only, like the schema; the interval
         # supervisor lives in by_teacher, so it is merged in just for reading.
-        for day in data.DAYS:
-            if (class_, day) in data.EXPERT_COVERS_INTERVAL:
-                rows[day][data.INTERVAL_SLOT] = "sorv. Esperto"
+        for day in config.days:
+            if (class_, day) in config.expert_covers_interval:
+                rows[day][config.interval_slot] = "sorv. Esperto"
             elif (class_, day) in supervisors:
-                rows[day][data.INTERVAL_SLOT] = (
+                rows[day][config.interval_slot] = (
                     f"sorv. {supervisors[(class_, day)]}"
                 )
-        _print_grid(f"Classe {class_}", rows)
+        _print_grid(config, f"Classe {class_}", rows)
 
     by_teacher = payload["by_teacher"]
-    for teacher in data.TEACHERS:
+    for teacher in config.teachers:
         entry = by_teacher[teacher]
         rows: Dict[str, Dict[str, str]] = {}
         for day, slots in entry["schedule"].items():
@@ -583,6 +583,7 @@ def print_report(solution: Solution, payload: Dict[str, object]) -> None:
                     label = f"{cell['subject']} {cell['class']}"
                 rows[day][slot] = label
         _print_grid(
+            config,
             f"Docente {teacher} — {entry['total_hours']}h "
             f"(didattica {entry['teaching_hours']}h, "
             f"assistenza {entry['assistance_hours']}h)",
@@ -591,8 +592,8 @@ def print_report(solution: Solution, payload: Dict[str, object]) -> None:
 
     print("\nMonte ore settimanale")
     print("-" * 60)
-    target_hours = output.hours_from_half(data.TARGET_HALF_HOURS)
-    for teacher in data.TEACHERS:
+    target_hours = output.hours_from_half(config.target_half_hours)
+    for teacher in config.teachers:
         entry = by_teacher[teacher]
         delta = entry["total_hours"] - target_hours
         marker = (
@@ -682,7 +683,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     logger.debug("sys.prefix: %s", sys.prefix)
 
     try:
-        data.load_config(args.config)
+        config = data.load_config(args.config)
     except FileNotFoundError as error:
         logger.error("Config non trovata: %s", error)
         raise SystemExit(1) from error
@@ -697,7 +698,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "Costruzione modello e avvio solver (time-limit=%.0fs)",
         args.time_limit,
     )
-    builder = TimetableModelBuilder(optimize=True)
+    builder = TimetableModelBuilder(config, optimize=True)
     cp_sat_model = builder.build()
     solver = model_module.build_solver(args.time_limit, args.verbose)
     status = solver.Solve(cp_sat_model)
@@ -707,23 +708,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         logger.error("Nessuna soluzione trovata: stato %s", status_name)
         logger.info("Analisi dei vincoli HARD in conflitto in corso…")
-        groups = model_module.diagnose_infeasibility(args.time_limit)
+        groups = model_module.diagnose_infeasibility(config, args.time_limit)
         for group in groups:
             logger.warning(
                 "Vincolo HARD in conflitto: %s (%s)",
                 group,
                 data.HARD_CONSTRAINT_LABELS.get(group, "sconosciuto"),
             )
-        payload = output.build_infeasible_output(status_name, groups)
+        payload = output.build_infeasible_output(config, status_name, groups)
         output.write_output(payload, args.output)
         logger.info("Report di infeasibility scritto in %s", args.output)
         return EXIT_INFEASIBLE
 
     solution = builder.extract(solver, status_name)
-    hard_violations = validate(solution)
-    payload = output.build_output(solution, hard_violations)
+    hard_violations = validate(config, solution)
+    payload = output.build_output(config, solution, hard_violations)
     output.write_output(payload, args.output)
-    print_report(solution, payload)
+    print_report(config, solution, payload)
     logger.info("JSON scritto in %s", args.output)
 
     if hard_violations:

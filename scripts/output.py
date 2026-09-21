@@ -46,7 +46,10 @@ def _school_year(moment: datetime) -> str:
 
 
 def _build_meta(
-    solver_status: str, objective_value: Optional[int], moment: datetime
+    config: data.Config,
+    solver_status: str,
+    objective_value: Optional[int],
+    moment: datetime,
 ) -> Dict[str, object]:
     return {
         "tool_version": __version__,
@@ -54,16 +57,18 @@ def _build_meta(
         "generated_at": moment.isoformat(timespec="seconds"),
         "solver_status": solver_status,
         "objective_value": objective_value,
-        "days": list(data.DAYS),
-        "slots": [dict(slot) for slot in data.SLOT_METADATA],
-        "classes": list(data.CLASSES),
-        "teachers": list(data.TEACHERS),
+        "days": list(config.days),
+        "slots": [dict(slot) for slot in config.slot_metadata],
+        "classes": list(config.classes),
+        "teachers": list(config.teachers),
     }
 
 
-def _build_by_class(solution: Solution) -> Dict[str, Dict[str, dict]]:
+def _build_by_class(
+    config: data.Config, solution: Solution
+) -> Dict[str, Dict[str, dict]]:
     by_class: Dict[str, Dict[str, dict]] = {
-        class_: {day: {} for day in data.DAYS} for class_ in data.CLASSES
+        class_: {day: {} for day in config.days} for class_ in config.classes
     }
     for lesson in solution.lessons:
         for class_ in lesson.classes:
@@ -84,19 +89,19 @@ def _build_by_class(solution: Solution) -> Dict[str, Dict[str, dict]]:
         for day, slots in days.items():
             by_class[class_][day] = {
                 slot: slots[slot]
-                for slot in data.FULL_SLOT_ORDER
+                for slot in config.full_slot_order
                 if slot in slots
             }
     return by_class
 
 
-def _build_by_teacher(solution: Solution) -> Dict[str, dict]:
+def _build_by_teacher(config: data.Config, solution: Solution) -> Dict[str, dict]:
     schedules: Dict[str, Dict[str, dict]] = {
-        teacher: {day: {} for day in data.DAYS} for teacher in data.TEACHERS
+        teacher: {day: {} for day in config.days} for teacher in config.teachers
     }
 
     for lesson in solution.lessons:
-        if lesson.teacher == data.EXPERT_LABEL:
+        if lesson.teacher == config.expert_label:
             continue
         entry: Dict[str, object] = {
             "class": lesson.classes[0],
@@ -108,7 +113,7 @@ def _build_by_teacher(solution: Solution) -> Dict[str, dict]:
         schedules[lesson.teacher][lesson.day][lesson.slot] = entry
 
     for teacher, class_, day in solution.interval_duties:
-        schedules[teacher][day][data.INTERVAL_SLOT] = {
+        schedules[teacher][day][config.interval_slot] = {
             "class": class_,
             "subject": None,
             "activity_type": model_module.ACTIVITY_INTERVAL,
@@ -120,7 +125,7 @@ def _build_by_teacher(solution: Solution) -> Dict[str, dict]:
             for other, other_day in solution.lunch_duties
             if other_day == day and other != teacher
         )
-        schedules[teacher][day][data.LUNCH_SLOT] = {
+        schedules[teacher][day][config.lunch_slot] = {
             "class": None,
             "subject": None,
             "activity_type": model_module.ACTIVITY_LUNCH,
@@ -128,13 +133,13 @@ def _build_by_teacher(solution: Solution) -> Dict[str, dict]:
         }
 
     by_teacher: Dict[str, dict] = {}
-    for teacher in data.TEACHERS:
+    for teacher in config.teachers:
         ordered_days = {}
-        for day in data.DAYS:
+        for day in config.days:
             slots = schedules[teacher][day]
             ordered_days[day] = {
                 slot: slots[slot]
-                for slot in data.FULL_SLOT_ORDER
+                for slot in config.full_slot_order
                 if slot in slots
             }
         by_teacher[teacher] = {
@@ -180,6 +185,7 @@ def _build_constraint_report(
 
 
 def build_output(
+    config: data.Config,
     solution: Solution,
     hard_violations: Sequence[Dict[str, str]],
     moment: Optional[datetime] = None,
@@ -188,10 +194,10 @@ def build_output(
     moment = moment or datetime.now().astimezone()
     return {
         "meta": _build_meta(
-            solution.status, solution.objective_value, moment
+            config, solution.status, solution.objective_value, moment
         ),
-        "by_class": _build_by_class(solution),
-        "by_teacher": _build_by_teacher(solution),
+        "by_class": _build_by_class(config, solution),
+        "by_teacher": _build_by_teacher(config, solution),
         "activity_types": list(model_module.ACTIVITY_TYPES),
         "constraint_report": _build_constraint_report(
             solution.violations, hard_violations
@@ -200,6 +206,7 @@ def build_output(
 
 
 def build_infeasible_output(
+    config: data.Config,
     solver_status: str,
     conflicting_groups: Sequence[str],
     moment: Optional[datetime] = None,
@@ -219,7 +226,7 @@ def build_infeasible_output(
         for group in conflicting_groups
     ]
     return {
-        "meta": _build_meta(solver_status, None, moment),
+        "meta": _build_meta(config, solver_status, None, moment),
         "by_class": {},
         "by_teacher": {},
         "activity_types": list(model_module.ACTIVITY_TYPES),
